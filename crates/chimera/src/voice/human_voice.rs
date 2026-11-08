@@ -12,6 +12,15 @@ use crate::math::{PI, clamp, exp, js_max, js_min, js_sign, js_trunc_i32, pow, sq
 use crate::physics::CM_H2O;
 use serde::{Deserialize, Serialize};
 
+/// A quantity that is 0 for the adult male, `female` for the adult female and `child` for the
+/// child, linear in between along the bodies' size scale (1, 0.9, 0.74): a blended body lands
+/// on its own point of the line.
+fn body_step(b: &HumanBody, female: f64, child: f64) -> f64 {
+    const FEMALE_AT: f64 = 0.1 / 0.26;
+    let u = clamp((1.0 - b.scale) / 0.26, 0.0, 1.0);
+    if u <= FEMALE_AT { female * u / FEMALE_AT } else { female + (child - female) * (u - FEMALE_AT) / (1.0 - FEMALE_AT) }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VoiceSource {
@@ -316,8 +325,14 @@ impl HumanVoice {
         // Most voices, women's and trained singers' included, leave a small posterior gap between
         // the arytenoids through the closed phase (Södersten & Lindestad 1990). It leaks a little
         // air and damps the tract, which lifts H1 and the band below 500 Hz.
-        g.chink = (0.008 + 0.03 * s.breathiness) * k2;
-        g.open_quotient = 0.78 - 0.36 * s.tension;
+        // Women and children do not sing through a smaller copy of a man's glottis: their folds
+        // are shorter and close less completely along their length (a larger posterior gap) and
+        // stay open longer in each cycle, so H1 stands further above H2 and the closure is softer
+        // (Klatt & Klatt 1990; Hanson 1997). The body's size gives the position along the
+        // male - female - child line, so blended bodies move smoothly.
+        let (more_gap, longer_open, softer) = (body_step(&self.airway.body, 1.5, 2.0), body_step(&self.airway.body, 0.10, 0.14), body_step(&self.airway.body, 0.15, 0.22));
+        g.chink = (0.008 + 0.03 * s.breathiness) * k2 * (1.0 + more_gap);
+        g.open_quotient = js_min(0.95, 0.78 - 0.36 * s.tension + longer_open);
         // The folds close along their length and depth over a return phase, not all at once, so
         // a sung or spoken voice closes softly (0.22 at tension 0.55): an abrupt closure put
         // 3-8 dB too much energy above 2 kHz. Pressing harder than that brings the abrupt closure
@@ -326,7 +341,7 @@ impl HumanVoice {
         // the model allows, 1 about as abruptly as a pressed voice.
         let bright = s.brightness - DEFAULT_SOURCE.brightness;
         let by_tension = 0.4 * s.tension + 1.375 * js_max(0.0, s.tension - 0.6);
-        g.closure_sharpness = clamp(by_tension + 0.8 * bright, 0.0, 1.0);
+        g.closure_sharpness = clamp(by_tension + 0.8 * bright - softer, 0.0, 1.0);
         g.skew = 0.56 + 0.16 * s.tension + 0.2 * bright;
         g.fry = s.fry;
         // Jitter of a healthy, trained voice at the default roughness (0.1): about 0.45 %, well

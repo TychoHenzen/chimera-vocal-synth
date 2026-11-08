@@ -140,7 +140,7 @@ pub fn klatt_durations(segs: &[Segment], info: impl Fn(&Segment) -> SegInfo) -> 
                 }
                 if stress == 0 {
                     min *= 0.5; // unstressed: minimum halved, shortened
-                    p *= 0.7;
+                    p *= 0.5;
                 }
                 // the following consonant (same word): voiced fricatives lengthen, voiceless stops shorten
                 let nx = if i + 1 < n && word[i + 1] == word[i] && !inf[i + 1].vowel { Some(inf[i + 1]) } else { None };

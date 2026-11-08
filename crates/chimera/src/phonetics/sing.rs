@@ -11,7 +11,7 @@
 //!
 //! These planners allocate (they run off the audio thread).
 
-use super::inventory::phoneme;
+use super::inventory::{Manner, phoneme};
 use crate::anatomy::human::BodyMix;
 use super::planner::{PlanOptions, diphthong_parts, plan_utterance};
 use super::{Intonation, Plan, PlannedSegment, Segment, Syllable};
@@ -22,9 +22,16 @@ use serde::{Deserialize, Serialize};
 /// `440 · 2^((m − 69)/12)`, the same formula and operation order as `sing.ts`.
 pub use crate::math::midi_to_hz;
 
-/// sung consonants are a little shorter than spoken ones
+/// a sung liquid or glide lasts at least this long (s). A spoken /ɹ/ of 50 ms is a tap to the
+/// ear: the English approximant is a glide the voice travels through, and singing has the time.
+const MIN_LIQUID: f64 = 0.095;
+
+/// sung consonants are a little shorter than spoken ones, except the liquids and glides, which
+/// are longer: they carry the vowel's colour in and out
 fn cdur(ipa: &str, body: BodyMix, k: f64) -> f64 {
-    phoneme(ipa, body).map_or(0.07, |d| d.dur) * k
+    let Some(d) = phoneme(ipa, body) else { return 0.07 * k };
+    let dur = d.dur * k;
+    if matches!(d.manner, Manner::Approximant | Manner::Lateral) { js_max(dur, MIN_LIQUID) } else { dur }
 }
 
 fn consonants(segs: &[Segment], body: BodyMix, k: f64) -> Vec<Segment> {
@@ -93,6 +100,13 @@ pub struct SongOptions {
     pub vibrato: f64,
 }
 
+/// share of a sung r-coloured vowel's note held as the plain vowel before the r
+const RHOTIC_HOLD: f64 = 0.7;
+
+fn is_rhotic(ipa: &str) -> bool {
+    matches!(ipa, "ɚ" | "ɝ")
+}
+
 fn melisma(s: &Syllable) -> bool {
     s.melisma == Some(true)
 }
@@ -150,6 +164,12 @@ pub fn plan_song(notes: &[SungNote], o: &SongOptions) -> Plan {
                 Some((a, b)) if !next_melisma => {
                     segs.push(Segment { ipa: a.to_string(), dur: Some(vdur * 0.8), f0: Some(hz), stress: Some(1), word_end: None });
                     segs.push(Segment { ipa: b.to_string(), dur: Some(vdur * 0.2), f0: Some(hz), stress: Some(1), word_end: None });
+                }
+                _ if is_rhotic(&n.syl.nucleus.ipa) && !next_melisma => {
+                    // a sung r-coloured vowel holds a plain vowel and curls to the r at the end,
+                    // as singers do; holding the curled tongue for the whole note sounds like a growl
+                    segs.push(Segment { ipa: "ə".into(), dur: Some(vdur * RHOTIC_HOLD), f0: Some(hz), stress: Some(1), word_end: None });
+                    segs.push(Segment { ipa: "ɝ".into(), dur: Some(vdur * (1.0 - RHOTIC_HOLD)), f0: Some(hz), stress: Some(1), word_end: None });
                 }
                 _ => {
                     let ipa = parts.map_or(n.syl.nucleus.ipa.clone(), |p| p.0.to_string());
