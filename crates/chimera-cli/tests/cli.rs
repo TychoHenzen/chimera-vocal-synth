@@ -403,8 +403,9 @@ fn render_notes_tele_records_the_live_telemetry_without_changing_the_sound() {
     let (version, rate, hop, frames, len, n_artic, n_ph, n_or, n_scope) = (u(0), u(1), u(2), u(3), u(4), u(5), u(6), u(7), u(8));
     assert_eq!((version, rate, hop, n_artic, n_scope), (1, 48000, 768, 17, 32));
     assert_eq!((f(40), f(44)), (1.0, 0.0), "body mix: female");
-    // the female airway at 48 kHz, two times oversampled
-    assert_eq!((n_ph, n_or), (15, 16));
+    // the female airway at 48 kHz, two times oversampled (16 pharynx sections since its pharynx
+    // factor went from 0.88 to 1.01)
+    assert_eq!((n_ph, n_or), (16, 16));
     assert_eq!(len, 11 + n_artic + 3 * (n_ph + n_or) + 2 * n_scope);
     // frame 0 before any sound, then one per whole hop
     assert_eq!(frames, 1 + samples / hop, "{stdout}");

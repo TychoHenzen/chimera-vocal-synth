@@ -265,7 +265,7 @@ pub struct HumanBody {
     pub name: &'static str,
     /// overall size scale (1 = adult male)
     pub scale: f64,
-    /// extra pharynx length scale (female/child have proportionally shorter pharynx)
+    /// pharynx length scale on the template (female/child have proportionally shorter pharynx)
     pub pharynx: f64,
     /// tongue body radius (cm, before scale)
     pub tongue_radius: f64,
@@ -273,8 +273,12 @@ pub struct HumanBody {
     pub lip_width: f64,
 }
 
-pub const BODY_MALE: HumanBody = HumanBody { name: "Adult male", scale: 1.0, pharynx: 1.0, tongue_radius: 2.25, lip_width: 4.6 };
-pub const BODY_FEMALE: HumanBody = HumanBody { name: "Adult female", scale: 0.9, pharynx: 0.88, tongue_radius: 2.2, lip_width: 4.4 };
+// The adult pharynx factors set F4. At 1.0 and 0.88 the male F4 sat near 3.8 kHz and the female
+// near 4.5-4.8 kHz, about 20% and 15% above the VocalSet singers' speech (LPC: men 2.9-3.9 kHz,
+// median 3.05; women 3.9-4.05). Both were lengthened by 1.15; the child, with no reference
+// recordings, keeps 0.8. See docs/vocalset.md.
+pub const BODY_MALE: HumanBody = HumanBody { name: "Adult male", scale: 1.0, pharynx: 1.15, tongue_radius: 2.25, lip_width: 4.6 };
+pub const BODY_FEMALE: HumanBody = HumanBody { name: "Adult female", scale: 0.9, pharynx: 1.01, tongue_radius: 2.2, lip_width: 4.4 };
 pub const BODY_CHILD: HumanBody = HumanBody { name: "Child", scale: 0.74, pharynx: 0.8, tongue_radius: 2.15, lip_width: 4.0 };
 
 /// The three human bodies by their short names.
@@ -1268,7 +1272,9 @@ impl HumanVocalTract {
         let vent = 0.95 * (1.0 - 0.75 * clamp(a.ventricular, 0.0, 1.0));
         // 0.2 cm2 at full narrowing: with a pharynx of 3-5 cm2 that is the 1:6 or tighter ratio at which
         // the tube rings as its own resonator near 3-4 kHz (Sundberg's singer's-formant cluster)
-        let top = lerp(1.9, 0.2, clamp(a.epilarynx, 0.0, 1.0));
+        // At rest the top is 0.8 cm2: MRI area functions put the epilarynx near 0.5-1 cm2, and at
+        // the 1.9 cm2 used before, F4 sat about 6% higher (tests/f4_placement.rs)
+        let top = lerp(0.8, 0.2, clamp(a.epilarynx, 0.0, 1.0));
         // laryngeal ventricle, ventricular folds, then the tube to its top
         let f = |x: f64| if x < 0.3 { 1.3 } else if x < 0.5 { vent } else { lerp(1.2, top, (x - 0.5) / 0.5) };
         // the steps between them are short ramps: a section boundary sliding across a step made

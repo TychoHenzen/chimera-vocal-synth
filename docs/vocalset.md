@@ -122,6 +122,52 @@ total level removed, and compared on 1/6-octave bins (scripts kept outside the r
 
 Vowel calibration fits F1-F3 only, so nothing ever places F4 and above, or how strong they are.
 
+## F4 placement (2026-11-10)
+
+`cargo run --release -p chimera --example tract_probe -- male|female <variant>` lists the tract's
+resonances per vowel with parts switched off. The high peak follows the pharynx: 15% more length
+moved it down 9-12%. A narrowed epilarynx moved it further. Closing the piriform fossae left the
+male peak in place, but in the female it removed the 4.75 kHz peak on /a/ outright.
+
+The reference is the singers' speech, not their singing. LPC (5 formants under 5 kHz for men,
+5.5 kHz for women) on the spoken "Row, row" excerpt puts F4 at:
+
+- 11 men: 2.86-3.87 kHz, median 3.05. The synth measured 3.75 the same way.
+- 9 women: 3.88-4.05 kHz. The synth's frames split between 4.25-4.5 and 4.75-5.25 kHz.
+
+The singers' long tones peak lower (men 3.0-3.3, women 3.4-3.8 kHz): that is singing technique,
+which the epilarynx ("ring") control models. Moving the resting anatomy to the sung peak would
+count it twice.
+
+So both adult pharynx factors grew by 1.15 (male 1.15, female 1.01; the child, with no reference
+here, stays 0.8), and the resting epilarynx top went from 1.9 to 0.8 cm2, near MRI values, on
+every body. The male tract is now 17.0 cm
+on /a/, the female 14.4. `tests/f4_placement.rs` holds the mean F4 over a e i o u in the spoken
+range (male 3.0-3.45, female 3.8-4.25 kHz) and, with the epilarynx fully narrowed, in the sung
+range. Calibration then refit F1-F3 a little worse: male rms error 2.3/2.0/4.2% became
+3.0/3.3/5.4%, mostly too low, since the VocalSet men's F3 (median 2.33 kHz) is lower than
+Hillenbrand's.
+
+Results, synth against singer (rms over 200 Hz-10 kHz of the harmonic level difference):
+
+- Men's long tones: m2 13.6 -> 10.8 dB, m5 11.1 -> 9.7, m8 14.7 -> 14.2, m10 13.9 -> 12.7. At
+  3.8-4.2 kHz the synth's excess fell from 11-19 dB to 5-10. Now the synth is 5-19 dB too strong
+  at 3.36 kHz, where its F4 sits.
+- Women's long tones: f1 10.4 -> 9.9, f3 10.5 -> 12.8, f6 8.8 -> 10.1. The synth's F4 now lands
+  on the 8th harmonic of C5 (4.24 kHz), where the sopranos have a dip, and they have 14 dB more at
+  4.76 kHz. With the epilarynx narrowed, the transfer function reaches their 3.6-3.8 kHz peak.
+- Speech: the synth's male F4 by LPC fell from 3.75 to 3.27 kHz. Its female F4 frames now
+  cluster at 4.0-4.5 kHz. The 7-10 dB deficit at 1.1-2.9 kHz did not move on either body: it is
+  not the tract's high resonances.
+
+Still open:
+
+- Bandwidths. Closed-glottis bandwidths of the high peaks are 11-46 Hz, and the back vowels' F3
+  is 12-15 Hz, against 85-130 Hz for /a/ and /i/. Viscous loss is taken at one frequency
+  (`viscous_omega`, 700 Hz), and nothing models heat conduction. The poles that radiate poorly
+  barely lose energy, so they ring as narrow, tall peaks. That is why the new F4 is too strong.
+- The speech deficit at 1-3 kHz: a source or loss question, not placement.
+
 ## Feeding evolve
 
 Before VocalSet can feed `chimera evolve`, the evolve problem needs:
