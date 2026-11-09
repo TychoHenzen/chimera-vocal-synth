@@ -263,7 +263,69 @@ fn with_voice(p: &Problem, voice: Option<&[f64]>) -> Vec<f64> {
     x
 }
 
+/// `chimera evolve --probe best.json [--set gene=value,...] [--wav out.wav]`: score a saved best
+/// with some genes changed, to see what one gene does to the loss on a real phrase.
+fn probe(ctx: &Ctx, a: &[String]) -> Result<(), String> {
+    let file = a.get(1).ok_or("--probe needs a best.json")?;
+    let j: Value = serde_json::from_str(&std::fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?).map_err(|e| e.to_string())?;
+    let notes = j["notes"].as_array().ok_or("no notes")?;
+    let phrase = Phrase {
+        song: j["song"].as_str().ok_or("no song")?.into(),
+        first: notes[0].as_u64().unwrap_or(0) as usize,
+        last: notes[1].as_u64().unwrap_or(0) as usize,
+    };
+    let p = load_problem(&phrase)?;
+    let mut x: Vec<f64> = p.spec.genes.iter().map(|g| (g.def - g.lo) / (g.hi - g.lo)).collect();
+    let set = |x: &mut Vec<f64>, name: &str, v: f64| {
+        if let Some(i) = p.spec.genes.iter().position(|g| g.name == name) {
+            let g = &p.spec.genes[i];
+            x[i] = ((v - g.lo) / (g.hi - g.lo)).clamp(0.0, 1.0);
+        } else {
+            eprintln!("no gene {name}");
+        }
+    };
+    for g in j["genes"].as_array().ok_or("no genes")? {
+        if let (Some(n), Some(v)) = (g["name"].as_str(), g["value"].as_f64()) {
+            set(&mut x, n, v);
+        }
+    }
+    let mut wav = None;
+    let mut sets = String::new();
+    let mut i = 2;
+    while i + 1 < a.len() {
+        match a[i].as_str() {
+            "--set" => sets = a[i + 1].clone(),
+            "--wav" => wav = Some(a[i + 1].clone()),
+            _ => {}
+        }
+        i += 2;
+    }
+    for kv in sets.split(',').filter(|s| !s.is_empty()) {
+        let (k, v) = kv.split_once('=').ok_or("--set wants name=value")?;
+        set(&mut x, k, v.parse::<f64>().map_err(|e| e.to_string())?);
+    }
+    // Level is its own gene (gain_db); null the gap so only the timbre is compared.
+    let gi = p.spec.genes.iter().position(|g| g.name == "gain_db").ok_or("no gain_db")?;
+    let mut e = p.evaluate(&x);
+    if std::env::var_os("PROBE_KEEP_GAIN").is_none() {
+        for _ in 0..3 {
+            let g = &p.spec.genes[gi];
+            let db = g.lo + x[gi] * (g.hi - g.lo) - e.gap;
+            set(&mut x, "gain_db", db);
+            e = p.evaluate(&x);
+        }
+    }
+    println!("loss {:.4}  level gap {:+.2} dB  ({})", e.loss, e.gap, comp_text(&e.comps));
+    if let Some(w) = wav {
+        ctx.write_wav(&w, &p.render(&x))?;
+    }
+    Ok(())
+}
+
 pub fn run(ctx: &Ctx, a: &[String]) -> Result<(), String> {
+    if a.first().map(String::as_str) == Some("--probe") {
+        return probe(ctx, a);
+    }
     let args = parse(a)?;
     let dir = args.out.clone();
     std::fs::create_dir_all(&dir).map_err(|e| format!("{dir}: {e}"))?;
