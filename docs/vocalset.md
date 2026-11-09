@@ -97,6 +97,32 @@ that range, since it fits only F1-F3. VocalSet tests that with less in the way:
   separates what the glottis does from what the tract does.
 - The spoken excerpts give each singer's speaking voice next to the sung one.
 
+## First comparison: straight long tones (2026-11-09)
+
+The synth (`render notes`, no vibrato) sang each singer's five long tones at the same pitch and
+length. Each voice's harmonic levels were averaged over the middle half of the note, with the
+total level removed, and compared on 1/6-octave bins (scripts kept outside the repo).
+
+- Men (m1, m2, m5, m8, m10, near 260 Hz): every singer has 11-26 dB more than the synth between
+  1.9 and 3.4 kHz, and up to 19 dB less at 3.8-4.8 kHz. The gap is 11-15 dB rms over 0.2-10 kHz,
+  9-12 of it the same on every vowel.
+- Women (f1, f3, near 530 Hz): 15-23 dB more than the synth at 3.4-3.8 kHz and a dip at
+  4.2-4.8 kHz, the same shape the CSD singer showed.
+- The engine's tract (the `transfer` call the UI draws, neutral epilarynx) has a resonance pair
+  that hardly moves with the vowel: 3.7-4.0 kHz in the male body, 4.7-4.9 kHz in the female. It
+  is often the strongest peak of the whole transfer function, F1 included. It sits about 25-30%
+  above where the singers' energy peaks. Narrowing the epilarynx fully, or lowering the larynx to
+  -1.3, pulls the male peak to 3.2-3.4 kHz. The epilarynx gene of 8b0e971 did not create it.
+- Speech: seven men speaking the "Row, row, row your boat" excerpt have 7-11 dB more than the
+  synth's male `render text` between 1.1 and 2.9 kHz (speaker spread 3-5 dB), and about the same
+  at 4.5-5.7 kHz. So the mid-band deficit is not only classical technique.
+- The per-vowel residuals at 1-2 kHz are large on all five vowels: sung vowels are not the spoken
+  American vowels of Hillenbrand that calibration fits.
+
+Vowel calibration fits F1-F3 only, so nothing ever places F4 and above, or how strong they are.
+
+## Feeding evolve
+
 Before VocalSet can feed `chimera evolve`, the evolve problem needs:
 
 - a voice body per singer (male or female size);
