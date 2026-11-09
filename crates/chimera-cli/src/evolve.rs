@@ -1,7 +1,7 @@
 //! `chimera evolve`: tune the synthesiser to recordings (the engine is in `chimera::evolve`;
 //! the web app's Evolve mode drives the same code through wasm workers).
 //!
-//! By default it rotates: every `--rotate` minutes (30) it moves to the next phrase of the next
+//! By default it rotates: every `--rotate` minutes (60) it moves to the next 8-20 s stretch (joined phrases) of the next
 //! training song (CSD songs whose number is not a multiple of five), keeping the voice genes
 //! (glottis, body, loudness shape, vowel articulation) and restarting the per-note genes
 //! (timing, pitch, vowel, level), so what survives is what holds across songs. The songs whose
@@ -20,9 +20,10 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-/// Phrase lengths trained on (the genome has five genes per note).
-const MAX_NOTES: usize = 14;
-const MIN_NOTES: usize = 4;
+/// Stretch lengths trained on (the genome has five genes per note).
+const MIN_SECONDS: f64 = 8.0;
+const MAX_SECONDS: f64 = 20.0;
+const MAX_NOTES: usize = 48;
 /// Held-out phrases scored at each rotation.
 const HELD_OUT: usize = 4;
 
@@ -60,7 +61,7 @@ fn parse(a: &[String]) -> Result<Args, String> {
         pop: 32,
         gens: None,
         minutes: 0.0,
-        rotate: 30.0,
+        rotate: 60.0,
         out: String::new(),
         resume: None,
         jobs: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4),
@@ -155,12 +156,18 @@ fn load_problem(p: &Phrase) -> Result<Problem, String> {
 /// Every whole phrase of a song that is neither a scrap nor too long to fit in a genome.
 /// (Cutting a phrase in the middle starts the recording inside a word the notes do not have.)
 fn phrases_of(song: &str, notes: &[Note]) -> Vec<Phrase> {
+    // Sung phrases last 1-5 s, too short to judge a voice on, so neighbouring phrases of one song
+    // are joined (the gap between them stays in the recording) until the stretch lasts MIN_SECONDS.
+    // A stretch that would pass MAX_SECONDS or MAX_NOTES is dropped, as is a short tail.
     let mut out = Vec::new();
     let mut a = 0;
     for (i, n) in notes.iter().enumerate() {
-        if n.syl.phrase_end || i + 1 == notes.len() {
-            let len = i + 1 - a;
-            if (MIN_NOTES..=MAX_NOTES).contains(&len) {
+        if !(n.syl.phrase_end || i + 1 == notes.len()) {
+            continue;
+        }
+        let secs = n.end - notes[a].start;
+        if secs >= MIN_SECONDS {
+            if secs <= MAX_SECONDS && i + 1 - a <= MAX_NOTES {
                 out.push(Phrase { song: song.into(), first: a, last: i });
             }
             a = i + 1;
