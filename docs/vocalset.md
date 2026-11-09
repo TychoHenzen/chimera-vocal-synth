@@ -107,7 +107,8 @@ total level removed, and compared on 1/6-octave bins (scripts kept outside the r
   1.9 and 3.4 kHz, and up to 19 dB less at 3.8-4.8 kHz. The gap is 11-15 dB rms over 0.2-10 kHz,
   9-12 of it the same on every vowel.
 - Women (f1, f3, near 530 Hz): 15-23 dB more than the synth at 3.4-3.8 kHz and a dip at
-  4.2-4.8 kHz, the same shape the CSD singer showed.
+  4.2-4.8 kHz, the same shape that the CSD singer showed. f6 is milder: 6-10 dB more at
+  3.0-3.8 kHz and no dip (+6 dB at 4.2 kHz, +1 at 4.8).
 - The engine's tract (the `transfer` call the UI draws, neutral epilarynx) has a resonance pair
   that hardly moves with the vowel: 3.7-4.0 kHz in the male body, 4.7-4.9 kHz in the female. It
   is often the strongest peak of the whole transfer function, F1 included. It sits about 25-30%
