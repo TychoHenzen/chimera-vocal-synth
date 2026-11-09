@@ -510,7 +510,7 @@ impl Mel {
 
 pub const N_COMP: usize = 5;
 pub const COMP_NAMES: [&str; N_COMP] = ["mel2048", "mel512", "flux", "envelope", "spectrum"];
-pub const COMP_WEIGHTS: [f64; N_COMP] = [1.0, 1.0, 0.5, 0.5, 1.0];
+pub const COMP_WEIGHTS: [f64; N_COMP] = [1.0, 1.0, 0.5, 0.5, 3.0];
 
 /// Long-term spectrum: each band's power averaged over the frames, in dB. Frame-by-frame errors in
 /// harmonic detail average out; a whole band that is too quiet (a missing 3-4 kHz body) does not.

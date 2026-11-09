@@ -609,7 +609,7 @@ if(L.length){
   const ax=axes(g,w,h,L[0].gen,L[L.length-1].gen,Math.max(lo*0.95,1e-3),hi*1.05,true);
   L.forEach((l,i)=>{if(i&&l.seg!==L[i-1].seg){g.strokeStyle=css('--mute');g.setLineDash([3,3]);g.beginPath();g.moveTo(ax.px(l.gen),8);g.lineTo(ax.px(l.gen),h-22);g.stroke();g.setLineDash([])}});
   [['worst','--c4'],['median','--c3'],['gen_best','--c2'],['best','--c1']].forEach(([k,c])=>{let seg=null,pts=[];const flush=()=>{if(pts.length)line(g,pts,css(c),ax.px,ax.py);pts=[]};L.forEach(l=>{if(l.seg!==seg){flush();seg=l.seg}pts.push([l.gen,Math.min(Math.max(l[k],1e-3),500)])});flush()})}
- {const{g,w,h}=setup('comp');const cols=['--c1','--c2','--c3','--c4','--c5'];const wts=[1,1,.5,.5,1];
+ {const{g,w,h}=setup('comp');const cols=['--c1','--c2','--c3','--c4','--c5'];const wts=[1,1,.5,.5,3];
   const ser=D.comp_names.map((n,i)=>L.map(l=>[l.gen,l.comps[i]*wts[i]]));const[lo,hi]=range(ser.flat().map(p=>p[1]));
   const ax=axes(g,w,h,L[0].gen,L[L.length-1].gen,Math.max(0,lo*0.9),hi*1.05,false);
   ser.forEach((s,i)=>line(g,s,css(cols[i]),ax.px,ax.py));

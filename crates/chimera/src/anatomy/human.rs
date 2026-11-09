@@ -1266,7 +1266,9 @@ impl HumanVocalTract {
     pub fn epilarynx_area(&self, a: &HumanArtic, s: f64, epi_len: f64) -> f64 {
         let u = s / epi_len;
         let vent = 0.95 * (1.0 - 0.75 * clamp(a.ventricular, 0.0, 1.0));
-        let top = lerp(1.9, 0.35, clamp(a.epilarynx, 0.0, 1.0));
+        // 0.2 cm2 at full narrowing: with a pharynx of 3-5 cm2 that is the 1:6 or tighter ratio at which
+        // the tube rings as its own resonator near 3-4 kHz (Sundberg's singer's-formant cluster)
+        let top = lerp(1.9, 0.2, clamp(a.epilarynx, 0.0, 1.0));
         // laryngeal ventricle, ventricular folds, then the tube to its top
         let f = |x: f64| if x < 0.3 { 1.3 } else if x < 0.5 { vent } else { lerp(1.2, top, (x - 0.5) / 0.5) };
         // the steps between them are short ramps: a section boundary sliding across a step made
