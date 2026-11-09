@@ -22,7 +22,7 @@ and the CLI) under a React UI. See the README.
   and the canvas renderers.
 - `tests/`: bun tests on the wasm build. `tools/`: e2e, layout lint, spectrogram, speech judge.
 - `docs/`: architecture, the engine contract (`rust-engine.md`), the UI look, the singer judge,
-  and the hill-climb rules.
+  the hill-climb rules, and the reference recordings (`csd-comparison.md`, `vocalset.md`).
 
 ## Rules
 
