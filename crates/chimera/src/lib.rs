@@ -39,6 +39,7 @@ pub mod analysis {
     pub mod fft;
     pub mod lpc;
     pub mod pitch;
+    pub mod quality;
 }
 
 pub mod util {
@@ -46,6 +47,8 @@ pub mod util {
 }
 
 pub mod creatures;
+pub mod csd;
+pub mod evolve;
 pub mod engine;
 pub mod phonetics;
 

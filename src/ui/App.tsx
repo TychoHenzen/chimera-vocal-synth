@@ -25,6 +25,8 @@ import { bodyLabel, presetOf, PRESETS } from "./body.ts";
 // three.js only loads when the 3D view is first shown
 const AnatomyView3D = lazy(() => import("./components/AnatomyView3D.tsx").then((m) => ({ default: m.AnatomyView3D })));
 // the duet page (`?show=<id>`): two 3D heads replaying a pre-rendered song
+// the evolver (workers, charts) only loads in Evolve mode
+const EvolvePage = lazy(() => import("./components/EvolvePage.tsx").then((m) => ({ default: m.EvolvePage })));
 const DuetPage = lazy(() => import("./components/DuetPage.tsx").then((m) => ({ default: m.DuetPage })));
 
 /** the show to play, from `?show=<id>` (a plain folder name under public/shows) */
@@ -64,9 +66,10 @@ function TopBar() {
           { value: "sing", label: "Sing" },
           { value: "bestiary", label: "Bestiary" },
           { value: "beatbox", label: "Beatbox" },
+          { value: "evolve", label: "Evolve" },
         ]}
       />
-      {mode !== "bestiary" && (
+      {mode !== "bestiary" && mode !== "evolve" && (
         <div className="body-control">
           <Segmented<BodyName>
             label="Body"
@@ -230,10 +233,18 @@ function Wall() {
   return (
     <div className={`app mode-${mode}`}>
       <TopBar />
-      <main className={`wall wall-${mode}`}>
-        <LeftScreen />
-        {mode === "play" ? <PlayRight /> : mode === "speak" ? <SpeakRight /> : mode === "sing" ? <SingRight /> : mode === "beatbox" ? <BeatboxRight /> : <BestiaryRight />}
-      </main>
+      {mode === "evolve" ? (
+        <main className="wall wall-evolve">
+          <Suspense fallback={null}>
+            <EvolvePage />
+          </Suspense>
+        </main>
+      ) : (
+        <main className={`wall wall-${mode}`}>
+          <LeftScreen />
+          {mode === "play" ? <PlayRight /> : mode === "speak" ? <SpeakRight /> : mode === "sing" ? <SingRight /> : mode === "beatbox" ? <BeatboxRight /> : <BestiaryRight />}
+        </main>
+      )}
     </div>
   );
 }

@@ -6,7 +6,9 @@
 mod calibrate;
 mod compare;
 mod diagnose;
+mod evolve;
 mod js;
+mod quality;
 mod render;
 mod wav;
 
@@ -27,6 +29,10 @@ usage: chimera <command> [args] [--float]
   diagnose       [outdir]
   compare csd    [csd-dir] [outdir] [--songs a|b|all|en001a,…] [--body female] [--jobs n]
                  [--against earlier/score.json]  (score.json: distance to the singer, and the verdict)
+  evolve         [--song en042a] [--notes 0-6] [--pop 32] [--gens 200] [--minutes n] [--out dir]
+                 [--resume dir] [--jobs n] [--seed n]  (evolve the voice to match a recording)
+  quality        <a.wav> [b.wav ...] | --pairs <evolve run dir>
+                 (jitter, shimmer, HNR, CPP, H1-H2, tilt, vibrato and loudness variation)
   calibrate vowels     [male|female|child|all] [--out file]
   calibrate consonants [--out file]
 
@@ -109,6 +115,8 @@ fn run(args: Vec<String>) -> Result<(), String> {
         }
         ["compare", "csd", ..] => compare::csd(&ctx, &args[2..]),
         ["diagnose", ..] => diagnose::run(&ctx, &args[1..]),
+        ["evolve", ..] => evolve::run(&ctx, &args[1..]),
+        ["quality", ..] => quality::run(&args[1..]),
         ["calibrate", "vowels", ..] => calibrate::vowels(&args[2..]),
         ["calibrate", "consonants", ..] => calibrate::consonants(&args[2..]),
         ["help" | "--help" | "-h", ..] => {

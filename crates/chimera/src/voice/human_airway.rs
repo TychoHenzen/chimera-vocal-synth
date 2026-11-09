@@ -9,6 +9,11 @@ use crate::anatomy::human::{HumanArtic, HumanBody, HumanFrame, HumanVocalTract};
 use crate::math::{js_max, js_min, js_round, smoothstep as smooth, sqrt};
 use crate::physics::{C_SOUND, RHO, WALL_NASAL, WALL_SOFT, WALL_TRACHEA};
 
+/// Default gain of the glottal aspiration noise source.
+pub const ASPIRATION_GAIN: f64 = 3.2e-6;
+/// Default upper edge (Hz) of the aspiration noise band.
+pub const ASPIRATION_HZ: f64 = 3500.0;
+
 #[derive(Clone, Copy, Debug)]
 pub struct NoiseGains {
     pub glottis: f64,
@@ -43,6 +48,8 @@ pub struct HumanAirway {
     pub or_len: f64,
     /// noise gains (tunable)
     pub noise_gain: NoiseGains,
+    /// upper edge (Hz) of the aspiration noise band
+    pub aspiration_hz: f64,
     /// max area change rate (cm²/s, body-scaled): a physiological guard against geometric jumps
     pub max_area_rate: f64,
     /// additional rate per cm² of current area (1/s)
@@ -139,7 +146,8 @@ impl HumanAirway {
             frame: None,
             ph_len: 8.8,
             or_len: 8.3,
-            noise_gain: NoiseGains { glottis: 3.2e-6, constriction: 2.2e-6, teeth: 3.0e-6 },
+            noise_gain: NoiseGains { glottis: ASPIRATION_GAIN, constriction: 2.2e-6, teeth: 3.0e-6 },
+            aspiration_hz: ASPIRATION_HZ,
             max_area_rate: 45.0,
             area_rate_gain: 40.0,
             seal_rate: 5.0,
@@ -268,7 +276,7 @@ impl HumanAirway {
         let mut list = core::mem::take(&mut self.noise_list);
         list.clear();
         // aspiration: jet from the glottis hits the epilarynx/ventricular region
-        list.push(NoiseSpec::new(self.glottis_port, self.branch_of(self.pharynx, 1), self.branch_of(self.trachea, self.trachea.n as isize - 2), g.glottis).band(3500.0, 300.0));
+        list.push(NoiseSpec::new(self.glottis_port, self.branch_of(self.pharynx, 1), self.branch_of(self.trachea, self.trachea.n as isize - 2), g.glottis).band(self.aspiration_hz, 300.0));
         // narrowest open point in pharynx+oral (global position index p over concatenated tubes)
         let (n_ph, n_or) = (self.n_ph, self.n_or);
         let mut min_a = f64::INFINITY;

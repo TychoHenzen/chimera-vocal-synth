@@ -33,6 +33,9 @@ struct State {
     next_model: usize,
     /// the page's English G2P (one dictionary, loaded once)
     g2p: EnglishG2P,
+    /// the Evolve mode's recording and notes (per worker, and on the main thread for the optimiser)
+    evo_problem: Option<chimera::evolve::Problem>,
+    evo_cma: Option<chimera::evolve::Cma>,
 }
 
 thread_local! {
@@ -151,6 +154,54 @@ fn dispatch(st: &mut State, req: &Value) -> Res {
         "formatBeat" => Ok(Value::String(beatbox::format_beat(&arg::<Vec<Option<BeatStep>>>(req, "steps")?))),
         "beatReady" => to_json(&beatbox::beat_ready(arg::<BodyMix>(req, "body")?)),
         "leadIn" => Ok(json!(BeatPlayer::lead_in(&arg::<String>(req, "id")?, arg::<BodyMix>(req, "body")?))),
+        // ---------------------------------------------------------------- evolving the voice
+        "csdNotes" => to_json(&chimera::csd::parse(&arg::<String>(req, "text")?, "notes file")?),
+        "evolveProblem" => {
+            let notes: Vec<chimera::csd::Note> = arg(req, "notes")?;
+            // 16-bit samples keep the JSON small; `wavT0` is where in the song they start
+            let wav: Vec<i32> = arg(req, "wav")?;
+            let wav: Vec<f64> = wav.into_iter().map(|s| s as f64 / 32768.0).collect();
+            let p = chimera::evolve::Problem::new(&notes, arg(req, "first")?, arg(req, "last")?, &wav, arg(req, "rate")?, arg(req, "wavT0")?)?;
+            let out = json!({ "genes": p.spec.genes, "seconds": p.seconds, "clip0": p.clip0, "bands": chimera::evolve::BANDS, "compNames": chimera::evolve::COMP_NAMES, "compWeights": chimera::evolve::COMP_WEIGHTS });
+            st.evo_problem = Some(p);
+            st.evo_cma = None;
+            Ok(out)
+        }
+        "evolveEval" => {
+            let p = st.evo_problem.as_ref().ok_or("no evolve problem (evolveProblem first)")?;
+            let xs: Vec<Vec<f64>> = arg(req, "xs")?;
+            to_json(&xs.iter().map(|x| p.evaluate(x)).collect::<Vec<_>>())
+        }
+        "evolveRender" => {
+            let p = st.evo_problem.as_ref().ok_or("no evolve problem (evolveProblem first)")?;
+            let x: Vec<f64> = arg(req, "x")?;
+            let out = p.render(&x);
+            let (sim, rf) = p.pictures(&out);
+            Ok(json!({ "samples": out, "sim": sim, "ref": rf, "vowels": p.spec.sung_vowels(&x) }))
+        }
+        "evolveStart" => {
+            let p = st.evo_problem.as_ref().ok_or("no evolve problem (evolveProblem first)")?;
+            let cma = match req.get("state") {
+                Some(v) if !v.is_null() => serde_json::from_value::<chimera::evolve::Cma>(v.clone()).map_err(|e| format!("state: {e}"))?,
+                _ => chimera::evolve::Cma::new(p.spec.start(), arg(req, "sigma")?, arg(req, "pop")?, arg(req, "seed")?),
+            };
+            if cma.mean.len() != p.spec.dim() {
+                return Err(format!("saved state has {} genes, this song has {}", cma.mean.len(), p.spec.dim()));
+            }
+            let out = json!({ "start": p.spec.start(), "generation": cma.generation, "sigma": cma.sigma });
+            st.evo_cma = Some(cma);
+            Ok(out)
+        }
+        "evolveAsk" => {
+            let c = st.evo_cma.as_mut().ok_or("no optimiser (evolveStart first)")?;
+            to_json(&c.ask())
+        }
+        "evolveTell" => {
+            let c = st.evo_cma.as_mut().ok_or("no optimiser (evolveStart first)")?;
+            c.tell(&arg::<Vec<f64>>(req, "losses")?);
+            Ok(json!({ "generation": c.generation, "sigma": c.sigma }))
+        }
+        "evolveState" => to_json(st.evo_cma.as_ref().ok_or("no optimiser (evolveStart first)")?),
         _ => Err(format!("unknown fn {name}")),
     }
 }

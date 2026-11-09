@@ -1,0 +1,120 @@
+# Why Chimera Sounds "Almost Human", and What to Optimise Instead
+
+The most likely reason Chimera sounds machine-made is the voice source, not the tract shape. A Pink-Trombone-style glottis is too clean and too regular. It has smooth pitch wobble but no real cycle-to-cycle irregularity, no amplitude irregularity, and breath noise that is not tied to each vocal pulse. Fix and test the source first. Then replace a single spectrogram loss with a small set of signals: voice-quality features, a modulation-aware loss, a learned embedding or discriminator trained on real voices, and human A/B tests to settle disputes.
+
+## TL;DR
+
+- **Reward:** No single number works. Use a mix: (1) cheap voice-quality features (jitter, shimmer, HNR, CPP, H1–H2, spectral tilt, formants) as constraints, (2) a modulation-aware differentiable loss (multi-resolution STFT plus joint time–frequency scattering) for copy-synthesis, (3) a self-supervised embedding distance or a HiFi-GAN-style discriminator trained on real voices for "human-ness", and (4) pairwise human tests as the final judge. Single MOS predictors are easy to game when used as an RL reward.
+- **Why it sounds artificial:** The top suspects are a source that is too periodic (no cycle-to-cycle jitter or shimmer), aspiration noise that is not pulsed with the glottal cycle, voice quality that never changes, a fixed tract length (formants that read as male and shift with sample rate), frequency-independent losses, and articulator movement that is too smooth or too slow. Perception research says "almost human" voices feel wrong when some cues are human and others are not.
+- **How to find the culprit:** Swap one part at a time. Drive Chimera's tract with a real glottal source taken from a recording by inverse filtering. Drive a real tract (LPC filter) with Chimera's source. Whichever swap makes it sound human tells you where the problem is. Then add jitter, shimmer, pulsed aspiration and voice-quality changes one at a time, with blind A/B listening.
+
+## Key Findings
+
+### 1. Why spectrograms and waveforms both fail as rewards
+
+- **A spectrogram** (energy over time and frequency) throws away phase (the timing of each wave inside a frame). It also averages over each frame. So it hides cycle-to-cycle detail, which is exactly where "aliveness" lives in a voice.
+- **A multi-resolution STFT loss** (the same spectrogram loss computed at several window sizes and summed) helps with the time/frequency trade-off. It is now standard. Its known limits: it ignores phase and cannot tell a waveform from its upside-down copy; window settings are chosen by trial and error; and spectral-only losses still leave audible artifacts. The AERO super-resolution paper found that a spectral loss alone gave strong objective scores but audible artifacts, and that adding adversarial and feature losses removed them.
+- **The raw waveform** is too sensitive. Two voices that sound the same can have very different waveforms because of small phase shifts.
+- **Phase-aware variants** do exist. These compare real and imaginary STFT parts, group delay (how much each frequency is delayed) or instantaneous frequency. FA-GAN uses a multi-resolution real/imaginary loss. These help with buzz and smeared transients, but they still need time-aligned targets.
+
+### 2. Why "almost human" voices feel wrong
+
+- Roger Moore's Bayesian model (Scientific Reports, 2012) says the uncanny feeling comes from **conflicting cues**. When some cues say "human" and others say "machine", perception is pulled two ways, and that tension is unpleasant.
+- Diel and Lewis ("Deviation from typical organic voices best explains a vocal uncanny valley", Computers in Human Behavior Reports 14, 2024, article 100430) found a vocal uncanny valley driven by **deviation from typical human voices**. Distorted and pathological voices fell into it. Modern TTS voices did not; in the authors' words, synthetic voices "successfully escape it".
+- What this means for Chimera: correct formants with a machine-perfect source is a textbook cue conflict. So is a male-length tract with a high pitch. The goal is not "more detail everywhere". The goal is to remove the cues that clash with each other.
+
+### 3. What we know about Pink Trombone's internals
+
+These findings come from faithful ports (sndkit, the Faust `pinktrombone.lib`, a Bela C++ port) and from Südholt et al. (DAFx 2023). The original source at dood.al was not checked directly.
+
+- **Glottis:** An LF (Liljencrants–Fant) pulse whose shape is set by "tenseness", with Rd = 3 × (1 − tenseness), clamped to 0.5–2.7. Rd is a single number that sweeps the pulse from pressed to breathy. A new pulse shape is computed once per period. Lip radiation is folded into the source.
+- **Pitch variation:** A small vibrato (default about 0.005) plus smooth simplex-noise drift at about 4.07 Hz and 2.15 Hz (amplitudes 0.02 and 0.04), with optional extra "wobble". This is **slow, smooth drift, not cycle-to-cycle jitter**. There is **no shimmer** (cycle-to-cycle amplitude change).
+- **Aspiration:** White noise scaled by (1 − √tenseness), band-passed around 500 Hz. The original modulates it with the glottal cycle. Simplified ports such as sndkit drop that modulation.
+- **Tract:** 44 Kelly–Lochbaum sections (a chain of short tubes where waves partly reflect at each change in width), run at twice the audio rate, plus a 28-section nose joined at section 17. Glottal reflection is 0.75. Lip and nostril reflection is −0.85. Loss is a flat 0.999 per tick, the same at every frequency. No wall vibration. No frequency-dependent radiation.
+- **Fixed length:** Tract length is fixed in samples, so formants move with sample rate. The Faust port notes formants about 9% higher at 48 kHz than at 44.1 kHz. Südholt et al. note the fixed length limits output to voices that read as male.
+- **Control rate:** Parameters update every 512-sample block and are interpolated within it.
+- **Known complaints:** At tenseness 1 it sounds "sharp and a bit robotic" (seleb port README). It cannot make a good [s] because it has no teeth. Commenters say the white-noise breath doesn't get the breathy quality across. Cámara et al. (DAFx 2023) got low scores when resynthesising real sustained vowels with Pink Trombone (PESQ about 1.8, ViSQOL about 2.1). They blamed its limited ability to match sounds outside its standard tract setting.
+
+### 4. Evidence on specific causes
+
+- **Jitter and shimmer:** In a study of synthesized vowels (PubMed 27777057), 27 of 80 vowels were rated human. 15 of these had jitter plus shimmer, 10 had jitter only, 2 had no perturbation, and none had shimmer only. Listeners judged jitter-plus-shimmer the most natural. Rozsypal and Millar (University of Alberta; J. Acoust. Soc. Am. 58, S23, 1975, later expanded in Journal of Phonetics, 1979) found that some roughness is needed for synthetic vowels to sound natural, and found no trade-off between jitter and shimmer. Kreiman and Gerratt (VOQUAL 2003) found that spectrally shaped additive noise mattered more than jitter or shimmer when matching voices, though that study used pathological voices.
+- **Pulsed aspiration:** Lu and Smith (ICMC 2000) modelled breath noise as Gaussian noise whose loudness rises and falls with each glottal pulse, on top of an LF pulse. Their sound examples show that without the noise source a vowel sounds nasal, not breathy. Daryush Mehta's 2006 MIT S.M. thesis ("Aspiration Noise during Phonation: Synthesis, Analysis, and Pitch-Scale Modification", with Thomas Quatieri) found that modulation of the noise source, and its timing relative to the periodic pulses, is important for natural-sounding vowel synthesis.
+- **Side branches and wall effects:** Birkholz and Drechsel (Speech Communication, 2021) added three features to a tube model: the piriform fossae (two small pockets beside the larynx), sound passing through the soft palate into the nose (transvelar coupling), and sound radiated from the neck skin. The piriform fossae make a clear spectral dip around 4–5 kHz. The other two add low-frequency energy and the "voice bar" during voiced stops. With a slightly tenser voice, listeners had no preference either way for the piriform fossae.
+- **1D tract above 4–5 kHz:** The plane-wave tube model is accurate up to about 4–5 kHz. Above that, 3D shape creates extra resonances and dips. This affects "presence" and voice quality more than vowel identity.
+- **State-of-the-art ceiling:** VocalTractLab, the leading articulatory synthesizer, matched non-commercial TTS in naturalness and intelligibility. Commercial systems clearly beat it. This comes from Krug, Stone and Birkholz (SSW 11, 2021, pp. 102–107), where 50 native German speakers rated German sentences from VocalTractLab, Google Cloud TTS, Microsoft Azure TTS, MaryTTS, MBROLA and DRESS. Birkholz's group reports that naturalness "largely depends on the voice source model". Even with good tract shapes, diphthongs and coarticulation (how neighbouring sounds blend) often sound unnatural unless the movements are modelled carefully.
+
+## Details
+
+### (a) Ranked shortlist of reward / loss options
+
+"Differentiable" means you can backpropagate through it. "RL/ES cost" is the cost per evaluation in reinforcement learning or evolutionary search.
+
+| Rank | Option | What it catches that a spectrogram misses | Differentiable? | RL/ES cost | Best use | Link |
+|---|---|---|---|---|---|---|
+| 1 | **Voice-quality feature vector**: F0 contour stats, jitter, shimmer, HNR (harmonics-to-noise ratio), CPP (cepstral peak prominence, a measure of how clearly periodic the voice is), H1–H2 (level difference between the first two harmonics, which tracks breathiness), spectral tilt, formants and bandwidths | Cycle-to-cycle irregularity, breathiness, source shape, interpretable targets | Mostly no (Praat), but F0, tilt, H1–H2 and CPP can be re-implemented differentiably | Very cheap | Constraints and diagnosis: match human ranges, don't maximise | https://parselmouth.readthedocs.io |
+| 2 | **Differentiable copy-synthesis** of the tract (Pink Trombone in PyTorch) with MR-STFT plus log-magnitude loss | Exact formant and area fit to a real recording | Yes | Medium (GPU) | Fit tract shapes and LF/Rd per vowel | https://github.com/dsuedholt/vocal-tract-grad ; https://arxiv.org/abs/2307.04702 |
+| 3 | **Joint time–frequency scattering (JTFS)**: wavelet-based features of how the spectrum moves over time | Vibrato, tremolo, roughness, modulation patterns; less sensitive to time misalignment | Yes (Kymatio) | Medium–high; SCRAPL claims about 20× speed-up | Loss for modulation and "liveliness" | https://arxiv.org/abs/2301.02886 ; https://arxiv.org/abs/2602.11145 |
+| 4 | **Self-supervised embeddings** (WavLM / HuBERT / wav2vec 2.0 layers), compared per clip or as a Fréchet distance over sets | Phonetic and voice-quality structure learned from huge real speech data; works without exact alignment | Yes (frozen model) | Medium (GPU forward pass) | Distance to a reference set of real voices | https://github.com/microsoft/fadtk ; https://arxiv.org/abs/2311.01616 |
+| 5 | **Adversarial discriminator** (HiFi-GAN multi-period and multi-scale discriminators, UnivNet, BigVGAN) trained on real voice vs Chimera | Whatever separates real from synthetic, including periodic artifacts | Yes | Training cost; cheap at inference | Learned "human-ness" critic; watch for overfitting | HiFi-GAN: https://arxiv.org/abs/2010.05646 |
+| 6 | **CDPAM / DPAM**: learned perceptual distance trained on human "same/different" judgments | Differences humans notice | Yes | Low–medium | Full-reference copy-synthesis loss | https://arxiv.org/abs/2102.05109 ; https://github.com/pranaymanocha/PerceptualAudio |
+| 7 | **CLAP embeddings** (audio–text) | Broad semantic match ("breathy female voice") | Yes | Medium | Exploration and quality–diversity search; Grouwels et al. used it with VocalTractLab and CMA-MAE (GECCO 2025) | https://doi.org/10.1145/3712256.3726313 |
+| 8 | **MOS predictors**: UTMOS, SCOREQ, DNSMOS, NISQA, TorchAudio-SQUIM | Overall "quality" learned from listener ratings | Yes (neural) | Medium | Sanity check; use only as an averaged ensemble | https://docs.pytorch.org/audio/main/tutorials/squim_tutorial.html |
+| 9 | **Intrusive quality metrics**: PESQ, POLQA, ViSQOL, PEAQ | Codec-style degradation against a reference | No | Low–medium | Diagnosis only | https://arxiv.org/pdf/2309.14761 (PT scored with PESQ/ViSQOL) |
+| 10 | **Human pairwise preference**, plus a reward model trained on it | The actual target | No | Expensive | Final judge; train a small preference model | (Run your own ABX / MUSHRA) |
+
+Practical notes:
+
+- **Don't use one MOS predictor as an RL reward.** A 2026 study (arXiv 2609.13150) found that UTMOS, SCOREQ, DNSMOS and similar predictors match listeners when one clip has clear defects. On clean audio they drop to chance. Optimising a single score caused reward hacking: the score went up while independent judges and listeners got worse. An equal-weight ensemble resisted this. In the same study, classical DSP statistics (jitter, HNR, CPPS, F0 std) were near chance at picking the preferred clip. So use them as diagnostics and range constraints, not as rewards to push up.
+- **Loss choice depends on the synthesizer.** Salimi, Hindle and Zaïane ("Evaluating Sound Similarity Metrics for Differentiable, Iterative Sound-Matching", IEEE/ACM TASLP, 2025) ran 300 trials for each of 16 synthesizer–loss pairs and found loss performance "highly dependent on the synthesizer". Gerazov et al. tested 40 feature–metric pairs for optimising VocalTractLab vowels, and the choice changed results. Benchmark two or three losses on Chimera itself.
+- **Fréchet distances need many samples.** Gui et al. (ICASSP 2024) showed FAD is biased by sample size, embedding choice and reference set. VGGish, the original FAD embedding, correlated poorly for music. Use fadtk with a modern embedding.
+- **Differentiable vocal-tract options already exist:** Südholt et al.'s PyTorch Pink Trombone; a differentiable Kelly–Lochbaum model with a nasal tract for biphonic singing (arXiv 2606.04943); a physics-informed Webster-equation model that learns area and lip radiation (arXiv 2602.13834); DDSP articulatory vocoders (Liu et al., arXiv 2409.02451); and the Hayes et al. DDSP review (arXiv 2308.15422).
+- **Analysis tools:** Kawahara's STRAIGHT and its successor WORLD split speech into F0, a smooth spectral envelope and aperiodicity. They are useful for building "real tract, synthetic source" swaps. A differentiable WORLD synthesizer also exists (Nercessian 2023).
+
+### (b) Diagnostic plan
+
+Run these in order. Each step should take a day or less. Use blind A/B or ABX tests: 8–15 listeners, randomised order, and the question "which sounds more like a real person?". Alongside every listening test, log a Praat voice report (F0 mean and SD, jitter, shimmer, HNR, CPP, H1–H2, formants) for both the real and the synthetic clip.
+
+1. **Build a matched reference set.** Record 2–3 speakers saying sustained vowels /a i u/ at a steady pitch, plus a few short CV and VCV phrases (for example "aba", "ama", "asa"). Use the sample rate Chimera runs at.
+2. **Sample-rate and length check (cheap).** Render the same vowel at 44.1, 48 and 96 kHz. If the formants move, your tract length is tied to sample rate. Fix it (fractional-delay sections or a variable section count) before tuning anything else. Also check whether a high-pitched voice sounds like "a man in falsetto". If so, scale the tract length with the voice.
+3. **Source swap A: real source → Chimera tract.** Inverse-filter a real vowel (glottal inverse filtering, e.g. IAIF) to estimate the glottal flow derivative. Feed it into Chimera's tract, which you have fitted to that vowel by differentiable copy-synthesis. If this suddenly sounds human, the source is the main culprit.
+4. **Source swap B: Chimera source → real tract.** Pass Chimera's LF source through an LPC or WORLD envelope taken from the same real vowel. If this still sounds robotic, that confirms the source.
+5. **Add one ingredient at a time** on top of Chimera's own source. A/B each step against the previous one:
+   - cycle-to-cycle jitter (random period changes per pulse, separate from the smooth simplex drift);
+   - shimmer (random amplitude changes per pulse);
+   - aspiration noise amplitude-modulated by the glottal flow, peaking in the open phase and near closure, with high-pass shaping;
+   - Rd that varies with loudness and pitch (laxer when quiet, tighter when loud), plus breathy onsets and creaky offsets at phrase ends;
+   - slow F0 declination across a phrase, and micro-prosody (small F0 dips at voiced consonants).
+6. **Tract-side ablations.** Add frequency-dependent loss so formant bandwidths widen with frequency, and compare measured bandwidths with the real recording. Add a wall-vibration or voice-bar term for voiced stops. Add a piriform-fossa side branch (spectral dip around 4–5 kHz). Expect smaller effects here than from the source.
+7. **Dynamics test.** Compare a static vowel, a diphthong and a CV syllable. If static vowels pass but transitions fail, the problem is movement. Measure formant-transition speed against the recording. Check that Chimera's 512-sample control blocks (about 11 ms) aren't causing staircase movement. Try target-approximation or critically damped movement models instead of linear ramps.
+8. **Residual analysis.** Time-align synthetic and real (DTW, an algorithm that stretches one clip in time to line it up with the other). Compare: the LPC residual (what is left after removing formants, which isolates the source); the modulation spectrum (how fast loudness and pitch fluctuate, roughly 2–20 Hz); and harmonic-versus-noise energy above 4 kHz. Any band or modulation rate where Chimera is "too clean" points to the missing ingredient.
+9. **Lock in with a composite reward.** Once you know the culprit, optimise with a weighted mix: copy-synthesis loss (MR-STFT + JTFS), feature-range penalties (keep jitter, shimmer, HNR, CPP and H1–H2 inside human ranges), an SSL or discriminator term, and an ensemble MOS check. Confirm with a final human A/B test.
+
+### (c) Most likely culprits, ordered by evidence and cost to test
+
+| # | Culprit | Evidence strength | Cost to test |
+|---|---|---|---|
+| 1 | Source too periodic: no cycle-to-cycle jitter or shimmer (Pink Trombone has only smooth drift) | Strong: several perception studies | Very cheap |
+| 2 | Aspiration not pulsed with the glottal cycle, or wrongly shaped | Strong: Lu and Smith; Mehta; Childers and Lee | Cheap |
+| 3 | Voice quality frozen (fixed tenseness/Rd, no breathy or creaky moments) | Medium–strong: Birkholz says naturalness "largely depends on the voice source model" | Cheap |
+| 4 | Fixed tract length tied to sample rate, giving a male tract with any pitch (cue conflict) | Medium: Südholt et al.; Faust port notes | Cheap |
+| 5 | Movement too smooth, too slow, or block-stepped; weak coarticulation | Medium: Birkholz coarticulation work; diphthong studies | Medium |
+| 6 | Frequency-independent loss, so formant bandwidths are wrong; no wall vibration or voice bar | Medium: Birkholz and Drechsel 2021 | Medium |
+| 7 | Missing side branches (piriform fossae) and nasal/sinus anti-resonances | Low–medium: mixed perceptual results | Medium |
+| 8 | No source–tract interaction or subglottal coupling (parametric LF pulse, not a flow model) | Medium in theory, little direct perceptual data found | High |
+| 9 | 1D plane-wave limit above 4–5 kHz; no teeth (poor sibilants) | Clear acoustically, smaller perceptual effect for vowels | High |
+
+## Recommendations
+
+- **This week:** Run steps 2–5 of the diagnostic plan. Expect the biggest jump from cycle-to-cycle jitter plus shimmer and from pulsed aspiration.
+- **For optimisation:** Use differentiable copy-synthesis (vocal-tract-grad style) with MR-STFT plus JTFS to fit tract and Rd to real recordings. Add feature-range penalties. Do not reward "higher HNR" or "higher MOS" directly.
+- **For RL or evolutionary search:** Use a cheap composite: feature-range penalties, an SSL-embedding distance to real voices, and an equal-weight ensemble of 2–3 MOS predictors. Check for reward hacking every few hundred iterations with a held-out judge and a quick human A/B.
+- **For music synthesis:** Swap the SSL speech model for MERT or CLAP embeddings, and use fadtk with music-appropriate embeddings. JTFS is especially good at vibrato and tremolo.
+- **Set expectations:** Even VocalTractLab sits below commercial TTS in naturalness. A Pink-Trombone-class model can sound convincingly human on vowels and simple phrases. Fluent speech will also need good movement control.
+
+## Caveats
+
+- The Pink Trombone internals come from ports, not the original file. A few defaults (vibrato amount, fade values) differ between ports.
+- Several sources are 2026 preprints (the reward-hacking study, the biphonic-singing and Webster-model papers). They are not yet peer-reviewed.
+- Most jitter and shimmer studies use sustained vowels. Their effect in running speech may be smaller.
+- The vocal uncanny-valley evidence is mixed. Some studies find no valley for synthetic voices alone. The cue-conflict account is the best-supported explanation, but it is a model, not a proven mechanism.
+- Exact human ranges for jitter, shimmer and HNR depend on the analysis tool and settings. Measure your own reference recordings with the same tool rather than relying on textbook thresholds.

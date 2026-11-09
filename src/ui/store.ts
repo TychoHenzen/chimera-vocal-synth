@@ -10,7 +10,7 @@ import { singNoteOn, singNoteOff, stopSinging, ensureDictionary } from "./singin
 import { stopSpeaking } from "./speech.ts";
 import { connectMidi, disconnectMidi, type MidiStatus } from "./midi.ts";
 
-export type Mode = "play" | "speak" | "sing" | "bestiary" | "beatbox";
+export type Mode = "play" | "speak" | "sing" | "bestiary" | "beatbox" | "evolve";
 
 export interface BeatState {
   steps: (BeatStep | null)[];

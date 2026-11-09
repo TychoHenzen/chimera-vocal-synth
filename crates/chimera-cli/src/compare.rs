@@ -35,8 +35,6 @@ use crate::{Ctx, FS, body};
 use chimera::analysis::fft::{Fft, hann, next_pow2};
 use chimera::analysis::pitch::{YinOpts, yin_pitch};
 use chimera::math::{js_round, midi_to_hz};
-use chimera::phonetics::Segment;
-use chimera::phonetics::Syllable;
 use chimera::phonetics::planner::diphthong_parts;
 use chimera::phonetics::sing::{SongOptions, SungNote, plan_song};
 use chimera::voice::human_voice::{HumanVoice, SourcePatch};
@@ -47,10 +45,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod score;
 
-/// A gap between notes longer than this (s) ends a phrase: the synth stops and breathes.
-const PHRASE_GAP: f64 = 0.08;
-/// Two notes this close (s) with a vowel-only second syllable on the same vowel are a melisma.
-const MELISMA_GAP: f64 = 0.02;
 const VIBRATO_CENTS: f64 = 35.0;
 const BANDS: [(f64, f64); 5] = [
     (0.0, 500.0),
@@ -73,53 +67,6 @@ const MAX_MISALIGN: f64 = 0.03;
 const GATE_DB: f64 = 35.0;
 const N_CEP: usize = 13;
 
-/// CSD's phoneme romanisation → engine IPA, and whether it is a vowel.
-fn csd_ipa(sym: &str) -> Option<(&'static str, bool)> {
-    Some(match sym {
-        "a" => ("ɑ", true),
-        "ae" => ("æ", true),
-        "ai" => ("aɪ", true),
-        "ao" => ("ʌ", true),
-        "au" => ("aʊ", true),
-        "e" => ("ɛ", true),
-        "ei" => ("eɪ", true),
-        "eo" => ("ə", true),
-        "er" => ("ɝ", true),
-        "i" => ("ɪ", true),
-        "ii" => ("i", true),
-        "oi" => ("ɔɪ", true),
-        "oo" => ("ɔ", true),
-        "ou" => ("oʊ", true),
-        "u" => ("ʊ", true),
-        "uu" => ("u", true),
-        "b" => ("b", false),
-        "ch" => ("tʃ", false),
-        "d" => ("d", false),
-        "dh" => ("ð", false),
-        "f" => ("f", false),
-        "g" => ("g", false),
-        "h" => ("h", false),
-        "j" => ("dʒ", false),
-        "k" => ("k", false),
-        "l" => ("l", false),
-        "m" => ("m", false),
-        "n" => ("n", false),
-        "ng" => ("ŋ", false),
-        "p" => ("p", false),
-        "r" => ("ɹ", false),
-        "s" => ("s", false),
-        "sh" => ("ʃ", false),
-        "t" => ("t", false),
-        "th" => ("θ", false),
-        "v" => ("v", false),
-        "w" => ("w", false),
-        "y" => ("j", false),
-        "z" => ("z", false),
-        "zh" => ("ʒ", false),
-        _ => return None,
-    })
-}
-
 /// IPA onsets with no voicing of their own: after them, the first voiced frame is the vowel's.
 const VOICELESS: [&str; 9] = ["p", "t", "k", "f", "θ", "s", "ʃ", "h", "tʃ"];
 
@@ -134,111 +81,20 @@ enum Start {
     Voiced,
 }
 
-struct Note {
-    start: f64,
-    end: f64,
-    midi: f64,
-    /// the CSD syllable as written (`k_y_uu`)
-    csd: String,
-    syl: Syllable,
-    /// first note after a phrase gap (or of the song)
-    phrase_start: bool,
-    /// end of the previous note (−∞ for the first)
-    prev_end: f64,
-}
+pub(crate) use chimera::csd::Note;
 
-impl Note {
-    fn starts_with(&self) -> Start {
-        match self.syl.onset.first() {
-            None => Start::Vowel,
-            Some(c) if VOICELESS.contains(&c.ipa.as_str()) => Start::Voiceless,
-            Some(_) => Start::Voiced,
-        }
+fn starts_with(n: &Note) -> Start {
+    match n.syl.onset.first() {
+        None => Start::Vowel,
+        Some(c) if VOICELESS.contains(&c.ipa.as_str()) => Start::Voiceless,
+        Some(_) => Start::Voiced,
     }
 }
 
 /// Read `csv/<id>.csv` into notes with engine syllables, melismas and phrase ends.
-fn load_notes(path: &str) -> Result<Vec<Note>, String> {
+pub(crate) fn load_notes(path: &str) -> Result<Vec<Note>, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-    let mut notes: Vec<Note> = Vec::new();
-    let mut unknown: Vec<String> = Vec::new();
-    for (ln, line) in text.lines().enumerate().skip(1) {
-        let f: Vec<&str> = line.trim().split(',').collect();
-        if f.len() < 4 {
-            continue;
-        }
-        let parse = |s: &str| {
-            s.trim()
-                .parse::<f64>()
-                .map_err(|e| format!("{path}:{}: {e}", ln + 1))
-        };
-        let (start, end, midi) = (parse(f[0])?, parse(f[1])?, parse(f[2])?);
-        let csd = f[3].trim().to_string();
-        let mut onset = Vec::new();
-        let mut nucleus: Option<Segment> = None;
-        let mut coda = Vec::new();
-        for p in csd.split('_').filter(|p| !p.is_empty()) {
-            let Some((ipa, vowel)) = csd_ipa(p) else {
-                unknown.push(format!("{p} (in {csd}, line {})", ln + 1));
-                continue;
-            };
-            match (&nucleus, vowel) {
-                (None, true) => nucleus = Some(Segment::new(ipa)),
-                (None, false) => onset.push(Segment::new(ipa)),
-                // a second vowel in one syllable sings as part of the coda
-                (Some(_), _) => coda.push(Segment::new(ipa)),
-            }
-        }
-        let nucleus = nucleus.unwrap_or_else(|| Segment::new("ə"));
-        notes.push(Note {
-            start,
-            end,
-            midi,
-            csd: csd.clone(),
-            syl: Syllable {
-                text: csd,
-                onset,
-                nucleus,
-                coda,
-                melisma: None,
-                word_end: true,
-                phrase_end: false,
-            },
-            phrase_start: false,
-            prev_end: f64::NEG_INFINITY,
-        });
-    }
-    if !unknown.is_empty() {
-        return Err(format!(
-            "{path}: unmapped CSD phonemes: {}",
-            unknown.join(", ")
-        ));
-    }
-    let n = notes.len();
-    for i in 0..n {
-        let gap_after = if i + 1 < n {
-            notes[i + 1].start - notes[i].end
-        } else {
-            f64::INFINITY
-        };
-        notes[i].syl.phrase_end = gap_after > PHRASE_GAP;
-        notes[i].phrase_start = i == 0 || notes[i - 1].syl.phrase_end;
-        if i > 0 {
-            notes[i].prev_end = notes[i - 1].end;
-        }
-        if i > 0 && !notes[i].phrase_start {
-            let (prev, cur) = (&notes[i - 1], &notes[i]);
-            let melisma = cur.syl.onset.is_empty()
-                && cur.syl.coda.is_empty()
-                && cur.syl.nucleus.ipa == prev.syl.nucleus.ipa
-                && cur.start - prev.end < MELISMA_GAP;
-            if melisma {
-                // plan_song holds the chain's first coda until its last note
-                notes[i].syl.melisma = Some(true);
-            }
-        }
-    }
-    Ok(notes)
+    chimera::csd::parse(&text, path)
 }
 
 /// A render on the recording's timeline.
@@ -325,7 +181,7 @@ fn render_notes(notes: &[Note], body_name: &str, seconds: f64) -> Result<Render,
 }
 
 /// Mono samples and rate of a PCM (16/24/32-bit) or float WAV; channels are averaged.
-fn read_wav(path: &str) -> Result<(Vec<f64>, f64), String> {
+pub(crate) fn read_wav(path: &str) -> Result<(Vec<f64>, f64), String> {
     let b = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     let bad = || format!("{path}: not a WAV file this reader understands");
     if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
@@ -873,7 +729,7 @@ fn compare_song(
         starts.push(if !n.phrase_start {
             0
         } else {
-            match n.starts_with() {
+            match starts_with(n) {
                 Start::Vowel => score::PHRASE_VOWEL,
                 Start::Voiceless => score::PHRASE_VOICELESS,
                 Start::Voiced => score::PHRASE_VOICED,
@@ -926,7 +782,7 @@ fn compare_song(
     let onset_of = |side: usize, start: Start| -> Vec<f64> {
         kept.iter()
             .zip(&per)
-            .filter(|(n, _)| n.phrase_start && n.starts_with() == start)
+            .filter(|(n, _)| n.phrase_start && starts_with(n) == start)
             .map(|(_, p)| if side == 0 { p.0.onset } else { p.1.onset })
             .collect()
     };
@@ -1270,6 +1126,7 @@ pub fn csd(ctx: &Ctx, a: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chimera::phonetics::{Segment, Syllable};
 
     const RATE: f64 = 44100.0;
 

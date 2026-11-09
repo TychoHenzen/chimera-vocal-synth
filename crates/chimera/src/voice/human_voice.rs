@@ -122,6 +122,42 @@ impl SourcePatch {
     }
 }
 
+/// Low-level knobs on the voice source and level, for tuning the voice against recordings. The
+/// default changes nothing: every scale is 1 and every offset 0.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoiceTuning {
+    /// posterior glottal gap, as a multiple
+    pub chink_scale: f64,
+    /// added to the open quotient and the skew, and to the closure sharpness
+    pub open_quotient_add: f64,
+    pub skew_add: f64,
+    pub sharpness_add: f64,
+    /// cycle-to-cycle period and amplitude noise, as multiples
+    pub jitter_scale: f64,
+    pub shimmer_scale: f64,
+    /// 0 = half-wave glottal area, 1 = continuous near-sinusoidal area, and its area gain
+    pub smooth_wave: f64,
+    pub wave_gain: f64,
+    /// lung pressure, as a multiple
+    pub pressure_scale: f64,
+    /// output level offset (dB)
+    pub gain_db: f64,
+    /// tract losses and glottal turbulence, as multiples: viscous loss, yielding-wall damping and the
+    /// aspiration noise gain. They set how wide the formants are and how much noise fills the gaps
+    /// between harmonics, which is where a render's high-frequency body comes from.
+    pub viscous_scale: f64,
+    pub wall_damping_scale: f64,
+    pub aspiration_scale: f64,
+    /// upper edge (Hz) of the aspiration noise band
+    pub aspiration_hz: f64,
+}
+
+impl Default for VoiceTuning {
+    fn default() -> Self {
+        VoiceTuning { chink_scale: 1.0, open_quotient_add: 0.0, skew_add: 0.0, sharpness_add: 0.0, jitter_scale: 1.0, shimmer_scale: 1.0, smooth_wave: 0.0, wave_gain: 1.0, pressure_scale: 1.0, gain_db: 0.0, viscous_scale: 1.0, wall_damping_scale: 1.0, aspiration_scale: 1.0, aspiration_hz: crate::voice::human_airway::ASPIRATION_HZ }
+    }
+}
+
 pub const SCOPE_POINTS: usize = 256;
 const SCOPE_LEN: usize = 4096;
 
@@ -176,6 +212,9 @@ pub struct HumanVoice {
     p_lung_step: f64,
     f0: f64,
     pub output_gain: f64,
+    /// `output_gain` before the tuning's level offset
+    base_output_gain: f64,
+    pub tuning: VoiceTuning,
     dc_x: f64,
     dc_y: f64,
     dc_coef: f64,
@@ -199,6 +238,10 @@ pub struct HumanVoice {
     base_abduction: f64,
     base_closure: f64,
     score_f0: Option<f64>,
+    /// a measured pitch contour (Hz per `f0_hop` seconds, 0 where unknown) that takes over from the
+    /// score's pitch wherever it has a value
+    f0_track: Vec<f64>,
+    f0_hop: f64,
     lim_env: f64,
     lim_hold: i64,
     lim_hold_n: i64,
@@ -233,6 +276,8 @@ impl HumanVoice {
             p_lung_step: 0.0,
             f0: DEFAULT_SOURCE.f0,
             output_gain: 5.5e-7,
+            base_output_gain: 5.5e-7,
+            tuning: VoiceTuning::default(),
             dc_x: 0.0,
             dc_y: 0.0,
             dc_coef: exp((-2.0 * PI * 25.0) / fs_out),
@@ -254,6 +299,8 @@ impl HumanVoice {
             base_abduction: 0.0,
             base_closure: 0.0,
             score_f0: None,
+            f0_track: Vec::new(),
+            f0_hop: 0.01,
             lim_env: 0.0,
             lim_hold: 0,
             lim_hold_n: crate::math::js_round(0.025 * fs_out) as i64,
@@ -273,6 +320,7 @@ impl HumanVoice {
         } else {
             0.55 + 0.45 * (sc - 0.9) / 0.1
         };
+        v.base_output_gain = v.output_gain;
         v.apply_source();
         v
     }
@@ -291,6 +339,23 @@ impl HumanVoice {
 
     pub fn set_source(&mut self, values: &SourcePatch) {
         values.apply(&mut self.source);
+        self.apply_source();
+    }
+
+    /// Follow a measured pitch contour (Hz every `hop` seconds from the start of the render, 0 =
+    /// unknown) instead of the score's note pitch. Vibrato and drift are part of the contour, so
+    /// set them to zero in the source.
+    pub fn set_f0_track(&mut self, hop: f64, track: Vec<f64>) {
+        self.f0_hop = hop.max(1e-3);
+        self.f0_track = track;
+    }
+
+    pub fn set_tuning(&mut self, t: VoiceTuning) {
+        self.tuning = t;
+        self.airway.net.viscous_scale = t.viscous_scale;
+        self.airway.net.wall_damping_scale = t.wall_damping_scale;
+        self.airway.noise_gain.glottis = crate::voice::human_airway::ASPIRATION_GAIN * t.aspiration_scale;
+        self.airway.aspiration_hz = t.aspiration_hz;
         self.apply_source();
     }
 
@@ -353,6 +418,16 @@ impl HumanVoice {
         g.vibrato_rate = s.vibrato_rate;
         g.drift = s.drift;
         g.effort = clamp((s.pressure.abs() - 3.0) / 10.0, 0.0, 1.0);
+        let t = self.tuning;
+        g.chink *= t.chink_scale;
+        g.open_quotient = clamp(g.open_quotient + t.open_quotient_add, 0.2, 0.98);
+        g.skew = clamp(g.skew + t.skew_add, 0.3, 0.9);
+        g.closure_sharpness = clamp(g.closure_sharpness + t.sharpness_add, 0.0, 1.0);
+        g.jitter *= t.jitter_scale;
+        g.shimmer *= t.shimmer_scale;
+        g.smooth_wave = clamp(t.smooth_wave, 0.0, 1.0);
+        g.wave_gain = t.wave_gain;
+        self.output_gain = self.base_output_gain * pow(10.0, t.gain_db / 20.0);
     }
 
     /// Render `out.len()` output samples.
@@ -505,13 +580,26 @@ impl HumanVoice {
             0.07
         };
         self.gate += (gate_goal - self.gate) * (1.0 - exp(-dt / tau));
-        self.p_lung = self.source.pressure * CM_H2O * self.gate;
+        self.p_lung = self.source.pressure * self.tuning.pressure_scale * CM_H2O * self.gate;
         self.p_lung_step = (self.p_lung - self.p_lung_now) / self.ctrl_every as f64;
         // vocal effort follows the pressure actually applied: a harder breath (a louder sung note)
         // gives wider, sharper-closing pulses, as in real phonation, not just more flow
         self.glottis.params.effort = clamp(((self.source.pressure * self.gate).abs() - 3.0) / 10.0, 0.0, 1.0);
+        // a measured contour wins over the score's note pitch where it has a value
+        let mut tracked = false;
+        if !self.f0_track.is_empty() {
+            let u = t / self.f0_hop;
+            let i = u.floor() as usize;
+            let (a, b) = (self.f0_track.get(i).copied().unwrap_or(0.0), self.f0_track.get(i + 1).copied().unwrap_or(0.0));
+            let hz = if a > 0.0 && b > 0.0 { a + (b - a) * (u - i as f64) } else if a > 0.0 { a } else { b };
+            if hz > 0.0 {
+                f0_target = hz;
+                self.score_f0 = Some(hz);
+                tracked = true;
+            }
+        }
         // pitch glide
-        let g = js_max(0.002, if self.score_f0.is_some() { 0.03 } else { self.source.glide });
+        let g = js_max(0.002, if tracked { 0.012 } else if self.score_f0.is_some() { 0.03 } else { self.source.glide });
         self.f0 *= pow(f0_target / self.f0, 1.0 - exp(-dt / g));
         self.glottis.params.f0 = self.f0;
         // smoothed mean flow per tract node (for particle speeds)

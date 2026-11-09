@@ -46,6 +46,11 @@ pub struct GlottisParams {
     /// bifurcation 0..1: a logistic map drives per-cycle period and amplitude. Rising values walk
     /// through period doubling (subharmonics, ~0.3), period four (~0.55) into deterministic chaos (>0.62).
     pub chaos: f64,
+    /// 0 = the half-wave pulse with a sealed closed phase, 1 = one continuous near-sinusoidal
+    /// oscillation (see `wave`); between, a blend. The default keeps the original pulse.
+    pub smooth_wave: f64,
+    /// area gain of the continuous wave (a smoother source radiates less, so it needs more flow)
+    pub wave_gain: f64,
 }
 
 pub const DEFAULT_GLOTTIS: GlottisParams = GlottisParams {
@@ -66,6 +71,8 @@ pub const DEFAULT_GLOTTIS: GlottisParams = GlottisParams {
     diplophonia: 0.0,
     closure: 0.0,
     chaos: 0.0,
+    smooth_wave: 0.0,
+    wave_gain: 1.0,
 };
 
 #[derive(Clone, Debug)]
@@ -203,7 +210,10 @@ impl ParametricGlottis {
         if p.fry > 0.0 {
             oq = oq * (1.0 - p.fry) + 0.28 * p.fry;
         }
-        let mut pulse = shape(self.phase, oq, p.skew, p.closure_sharpness);
+        let old = shape(self.phase, oq, p.skew, p.closure_sharpness);
+        // fry keeps the old short-open-phase pulse: its closed gap is the point of the effect
+        let w = p.smooth_wave * (1.0 - p.fry);
+        let mut pulse = if w > 0.0 { old * (1.0 - w) + p.wave_gain * wave(self.phase, oq, p.skew, p.closure_sharpness) * w } else { old };
         if p.fry > 0.3 {
             // second, weaker pulse shortly after the first (double pulsing typical of fry)
             let ph2 = self.phase - 0.38;
@@ -228,7 +238,27 @@ impl ParametricGlottis {
     }
 }
 
-/// Normalised area pulse (0..1) at cycle phase ph.
+/// Normalised area (0..1) over the whole cycle: one continuous, near-sinusoidal oscillation, as
+/// high-speed video of the folds shows. The folds never sit sealed for half the cycle; the edges
+/// roll over each other, so the area bottoms out smoothly (no flat zero, no corner at closure).
+/// - `oq` sets how deep the trough goes: 1 is a full sine, lower values flatten the bottom
+///   (soft contact) without ever creating a corner.
+/// - `skew` shifts the peak later in the cycle (faster closing than opening) by warping the phase.
+/// - `sharp` narrows the peak slightly (more high harmonics), still smooth at the trough.
+#[inline]
+fn wave(ph: f64, oq: f64, skew: f64, sharp: f64) -> f64 {
+    let k = clamp((skew - 0.5) * 2.0, -0.9, 0.9);
+    let theta = TAU * ph - k * sin(TAU * ph);
+    let base = pow(0.5 - 0.5 * cos(theta), 1.0 + 0.4 * sharp);
+    // soft contact: lift the trough with a smooth max so the bottom is rounded, not clipped
+    let c = clamp((1.0 - oq) * 0.5, 0.0, 0.45);
+    let y = base - c;
+    let e = 0.03;
+    let soft = 0.5 * (y + (y * y + e * e).sqrt());
+    soft / (1.0 - c + 0.5 * e * e / (1.0 - c).max(1e-6))
+}
+
+/// Normalised area pulse (0..1) at cycle phase ph: the old half-wave with a sealed closed phase.
 #[inline]
 fn shape(ph: f64, oq: f64, skew: f64, sharp: f64) -> f64 {
     if ph >= oq {

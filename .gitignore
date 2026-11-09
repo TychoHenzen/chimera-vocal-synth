@@ -8,3 +8,8 @@ src/wasm/chimera.wasm
 
 # duet shows (?show=<id>) are made locally and are never published: often covers of songs we have no rights to
 public/shows/
+
+# reference recordings (CSD english subset, opera clips): large, licensed, user-supplied
+voiceRef/
+# second cargo target dir, used while a long run holds target/release/chimera.exe open
+target-dev/

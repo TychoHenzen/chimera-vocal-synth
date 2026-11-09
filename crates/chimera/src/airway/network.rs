@@ -321,6 +321,8 @@ pub struct AirwayNetwork {
     pub min_node_area: f64,
     /// global viscous loss scale
     pub viscous_scale: f64,
+    /// multiplier on every yielding wall's damping (1 = as built)
+    pub wall_damping_scale: f64,
     /// reference angular frequency for frequency-independent viscous loss
     pub viscous_omega: f64,
     /// scale on turbulence noise gain
@@ -417,6 +419,7 @@ impl AirwayNetwork {
             closed_area: 2e-4,
             min_node_area: 0.02,
             viscous_scale: 1.0,
+            wall_damping_scale: 1.0,
             viscous_omega: 2.0 * PI * 700.0,
             noise_scale: 1.0,
             out: 0.0,
@@ -999,7 +1002,7 @@ impl AirwayNetwork {
                 continue;
             }
             let m = self.wall_m[k];
-            let r = self.wall_r[k];
+            let r = self.wall_r[k] * self.wall_damping_scale;
             let v = ((m * inv_t - 0.5 * r) * self.wall_v[k] + self.p[k] - self.wall_k[k] * self.wall_y[k]) / (m * inv_t + 0.5 * r);
             self.wall_v[k] = v;
             self.wall_y[k] += t * v;
