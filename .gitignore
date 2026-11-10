@@ -11,6 +11,8 @@ public/shows/
 
 # reference recordings (CSD english subset, VocalSet, opera clips): large, licensed, user-supplied
 voiceRef/
+# Claude Code's desktop app keeps its preview launch config (launch.json) here
+.claude/
 # the serena MCP server writes its project cache and memories here
 .serena/
 # second cargo target dir, used while a long run holds target/release/chimera.exe open

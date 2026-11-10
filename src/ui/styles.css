@@ -2870,6 +2870,7 @@ input[type="range"]::-moz-range-thumb {
   min-width: 0;
 }
 .evolve .ev-setup,
+.evolve .ev-notes,
 .evolve .ev-genes,
 .evolve .ev-spec,
 .evolve .ev-params {
@@ -2881,6 +2882,7 @@ input[type="range"]::-moz-range-thumb {
   min-height: 240px;
 }
 .evolve .ev-genes { min-height: 320px; }
+.evolve .ev-notes { min-height: 280px; }
 .evolve .ev-spec { min-height: 420px; }
 .evolve .screen-body > canvas {
   position: relative;

@@ -54,6 +54,15 @@ pub fn csd_ipa(sym: &str) -> Option<(&'static str, bool)> {
         "y" => ("j", false),
         "z" => ("z", false),
         "zh" => ("ʒ", false),
+        // not in CSD: the pure vowels, tap, trill and palatals of Italian and Latin (the VocalSet
+        // excerpts, written in this romanisation by tools/vocalset-notes.ts)
+        "aa" => ("a", true),
+        "ee" => ("e", true),
+        "o" => ("o", true),
+        "dx" => ("ɾ", false),
+        "rr" => ("r", false),
+        "gn" => ("ɲ", false),
+        "gl" => ("ʎ", false),
         _ => return None,
     })
 }

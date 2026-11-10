@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { call } from "../../wasm/chimera.ts";
-import { EvolveRunner, type CsdNote, type Gene, type SavedRun } from "../../evolve/runner.ts";
-import { INK, drawGenes, drawSeries, drawSpectro } from "../../evolve/charts.ts";
+import { EvolveRunner, cutClip, sweepWindows, type CsdNote, type Gene, type SavedRun } from "../../evolve/runner.ts";
+import { INK, drawGenes, drawNotes, drawSeries, drawSpectro, type NoteLook } from "../../evolve/charts.ts";
 import { Screen } from "./Screen.tsx";
 
 /** One runner for the page's life: switching modes does not stop a run. */
@@ -30,7 +30,7 @@ async function decodeAudio(buf: ArrayBuffer): Promise<{ samples: Float32Array; r
   }
 }
 
-let player: { ctx: AudioContext; src: AudioBufferSourceNode } | null = null;
+let player: { ctx: AudioContext; src: AudioBufferSourceNode; at: number } | null = null;
 function stopPlaying(): void {
   if (!player) return;
   try {
@@ -40,6 +40,10 @@ function stopPlaying(): void {
   }
   void player.ctx.close();
   player = null;
+}
+/** Seconds into the clip that is playing, or null. */
+function playingAt(): number | null {
+  return player ? player.ctx.currentTime - player.at : null;
 }
 function play(samples: ArrayLike<number>, rate: number, onEnd: () => void): void {
   stopPlaying();
@@ -59,15 +63,45 @@ function play(samples: ArrayLike<number>, rate: number, onEnd: () => void): void
     onEnd();
   };
   src.start();
-  player = { ctx, src };
+  player = { ctx, src, at: ctx.currentTime };
 }
 
-function download(name: string, text: string): void {
+function download(name: string, data: string | Blob): void {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  a.href = URL.createObjectURL(typeof data === "string" ? new Blob([data], { type: "application/json" }) : data);
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+/** 16-bit mono WAV, peak-normalised only if it would clip (as it plays). */
+function wavBlob(samples: ArrayLike<number>, rate: number): Blob {
+  let peak = 1e-9;
+  for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]));
+  const k = Math.min(1, 0.95 / peak);
+  const buf = new DataView(new ArrayBuffer(44 + samples.length * 2));
+  const str = (o: number, t: string) => [...t].forEach((ch, i) => buf.setUint8(o + i, ch.charCodeAt(0)));
+  str(0, "RIFF");
+  buf.setUint32(4, 36 + samples.length * 2, true);
+  str(8, "WAVEfmt ");
+  buf.setUint32(16, 16, true);
+  buf.setUint16(20, 1, true);
+  buf.setUint16(22, 1, true);
+  buf.setUint32(24, rate, true);
+  buf.setUint32(28, rate * 2, true);
+  buf.setUint16(32, 2, true);
+  buf.setUint16(34, 16, true);
+  str(36, "data");
+  buf.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) buf.setInt16(44 + i * 2, Math.max(-32768, Math.min(32767, Math.round(samples[i] * k * 32767))), true);
+  return new Blob([buf.buffer], { type: "audio/wav" });
+}
+
+/** A note's syllable in the engine's IPA ("ka", "ɾo"), as the strip labels it. */
+function sylText(n: CsdNote): string {
+  const s = n.syl as { onset?: { ipa: string }[]; nucleus?: { ipa: string }; coda?: { ipa: string }[] };
+  const ipa = [...(s.onset ?? []), ...(s.nucleus ? [s.nucleus] : []), ...(s.coda ?? [])].map((x) => x.ipa).join("");
+  return ipa || n.csd;
 }
 
 function useRunner(): number {
@@ -115,6 +149,12 @@ export function EvolvePage() {
   const [pendingWav, setPendingWav] = useState<{ name: string; buf: ArrayBuffer } | null>(null);
   const [pendingCsv, setPendingCsv] = useState<{ name: string; text: string } | null>(null);
   const [resume, setResume] = useState<SavedRun | null>(null);
+  const [mode, setMode] = useState<"range" | "sweep">("sweep");
+  const [winSize, setWinSize] = useState(6);
+  const [overlap, setOverlap] = useState(2);
+  const [gens, setGens] = useState(30);
+  /** song seconds under the playhead while a whole-section clip plays */
+  const [playhead, setPlayhead] = useState<number | null>(null);
 
   // songs the dev server can hand over from voiceRef/
   useEffect(() => {
@@ -122,7 +162,7 @@ export function EvolvePage() {
       .then((r) => (r.ok ? r.json() : { songs: [] }))
       .then((j: { songs: string[] }) => {
         setAvailable(j.songs);
-        if (j.songs.length) setPick(j.songs.includes("en042a") ? "en042a" : j.songs[0]);
+        if (j.songs.length) setPick(j.songs.includes("csd/en042a") ? "csd/en042a" : j.songs[0]);
       })
       .catch(() => {});
   }, []);
@@ -139,10 +179,10 @@ export function EvolvePage() {
   const loadFromServer = async () => {
     setLoading(`loading ${pick}`);
     try {
-      const [csv, wav] = await Promise.all([fetch(`/voiceref/csd/${pick}.csv`).then((r) => r.text()), fetch(`/voiceref/csd/${pick}.wav`).then((r) => r.arrayBuffer())]);
+      const [csv, wav] = await Promise.all([fetch(`/voiceref/${pick}.csv`).then((r) => r.text()), fetch(`/voiceref/${pick}.wav`).then((r) => r.arrayBuffer())]);
       const notes = call<CsdNote[]>("csdNotes", { text: csv });
       const a = await decodeAudio(wav);
-      install({ label: pick, notes, ...a });
+      install({ label: pick.replace(/^\w+\//, ""), notes, ...a });
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -164,21 +204,15 @@ export function EvolvePage() {
     }
   };
 
-  const clip = useMemo(() => {
-    if (!song || !song.notes[first] || !song.notes[last]) return null;
-    const clip0 = Math.max(0, song.notes[first].start - 0.4);
-    const clip1 = song.notes[last].end + 0.5;
-    const t0 = Math.max(0, clip0 - 0.1);
-    const t1 = clip1 + 0.1;
-    const a = Math.floor(t0 * song.rate);
-    const b = Math.min(song.samples.length, Math.ceil(t1 * song.rate));
-    const wav = new Int16Array(Math.max(0, b - a));
-    for (let i = 0; i < wav.length; i++) wav[i] = Math.max(-32768, Math.min(32767, Math.round(song.samples[a + i] * 32767)));
-    return { wav, wavT0: t0, clip0, seconds: clip1 - clip0 };
-  }, [song, first, last]);
+  const clip = useMemo(() => (song && song.notes[first] && song.notes[last] ? cutClip(song.samples, song.rate, song.notes, first, last) : null), [song, first, last]);
+  const windows = useMemo(() => (song ? sweepWindows(song.notes.length, winSize, overlap) : []), [song, winSize, overlap]);
 
   const start = (withResume: boolean) => {
     if (!song || !clip) return;
+    if (mode === "sweep") {
+      void runner.startSweep({ notes: song.notes, samples: song.samples, rate: song.rate, window: winSize, overlap, gens, pop, sigma, seed, workers, label: song.label });
+      return;
+    }
     void runner.start({
       notes: song.notes,
       first,
@@ -199,16 +233,45 @@ export function EvolvePage() {
   const info = runner.info;
   const lastRec = h[h.length - 1];
   const genes: Gene[] = info?.genes ?? [];
-  const listen = (id: string, samples: ArrayLike<number> | undefined, rate = 48000) => {
+  const chartGenes = runner.sweep && info ? genes.slice(0, info.nGlobal) : genes;
+  const sweep = runner.sweep;
+  const full = sweep?.full ?? null;
+  const listen = (id: string, samples: ArrayLike<number> | undefined, rate = 48000, songT0?: number) => {
     if (!samples) return;
     if (playing === id) {
       stopPlaying();
       setPlaying("");
+      setPlayhead(null);
       return;
     }
     setPlaying(id);
-    play(samples, rate, () => setPlaying((p) => (p === id ? "" : p)));
+    play(samples, rate, () => {
+      setPlaying((p) => (p === id ? "" : p));
+      setPlayhead(null);
+    });
+    if (songT0 === undefined) return setPlayhead(null);
+    const step = () => {
+      const at = playingAt();
+      if (at === null) return;
+      setPlayhead(songT0 + at);
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
   };
+  const fullRecording = useMemo(() => {
+    if (!song || !full) return undefined;
+    const a = Math.round(full.clip0 * song.rate);
+    return song.samples.subarray(a, Math.min(song.samples.length, a + Math.round(full.seconds * song.rate)));
+  }, [song, full]);
+  const noteLooks: NoteLook[] = song
+    ? song.notes.map((nt, k) => {
+        const win = sweep && sweep.phase === "windows" ? sweep.windows[sweep.index] : null;
+        const active = !!win && k >= win[0] && k <= win[1];
+        const genes = sweep ? runner.noteValues(k) : null;
+        return { start: nt.start, end: nt.end, midi: nt.midi, text: sylText(nt), state: active ? "active" : genes ? "done" : "pending", genes };
+      })
+    : [];
+  const activeWin = sweep && sweep.phase === "windows" && runner.running ? (sweep.windows[sweep.index] ?? null) : null;
   const recordingSamples = useMemo(() => {
     // the engine trims the clip to the notes' neighbours: use its own clip start and length
     if (!song || !clip || !runner.info) return undefined;
@@ -272,6 +335,35 @@ export function EvolvePage() {
             <>
               <div className="ev-row">
                 <label>
+                  Mode
+                  <select value={mode} disabled={runner.running} onChange={(e) => setMode(e.target.value as "range" | "sweep")}>
+                    <option value="sweep">Sweep the song, window by window</option>
+                    <option value="range">One range of notes</option>
+                  </select>
+                </label>
+                {mode === "sweep" && (
+                  <>
+                    <label>
+                      Notes per window
+                      <input type="number" min={2} max={16} value={winSize} disabled={runner.running} onChange={(e) => setWinSize(Math.max(2, Math.min(16, Number(e.target.value))))} />
+                    </label>
+                    <label>
+                      Overlap
+                      <input type="number" min={0} max={winSize - 1} value={overlap} disabled={runner.running} onChange={(e) => setOverlap(Math.max(0, Math.min(winSize - 1, Number(e.target.value))))} />
+                    </label>
+                    <label>
+                      Generations per window
+                      <input type="number" min={1} max={500} value={gens} disabled={runner.running} onChange={(e) => setGens(Math.max(1, Number(e.target.value)))} />
+                    </label>
+                    <span className="hint">
+                      {windows.length} windows over {song.notes.length} notes; the first gets {gens * 2} generations (it also finds the voice)
+                    </span>
+                  </>
+                )}
+              </div>
+              {mode === "range" && (
+              <div className="ev-row">
+                <label>
                   First note
                   <input type="number" min={0} max={song.notes.length - 1} value={first} disabled={runner.running} onChange={(e) => setFirst(Math.max(0, Math.min(Number(e.target.value), last)))} />
                 </label>
@@ -281,6 +373,7 @@ export function EvolvePage() {
                 </label>
                 <span className="hint">{song.notes.slice(first, last + 1).map((n) => n.csd).join(" ")}</span>
               </div>
+              )}
               <div className="ev-row">
                 <label>
                   Population
@@ -301,22 +394,25 @@ export function EvolvePage() {
               </div>
               <div className="ev-row">
                 {runner.running ? (
-                  <button className="primary" onClick={() => runner.stop()}>
-                    Stop
-                  </button>
+                  <>
+                    <button className="primary" onClick={() => runner.stop()}>
+                      Stop
+                    </button>
+                    {sweep?.phase === "windows" && <button onClick={() => runner.skipToFull()}>Sing the whole section now</button>}
+                  </>
                 ) : (
                   <>
                     <button className="primary" onClick={() => start(false)}>
-                      Start a new run
+                      {mode === "sweep" ? "Start a sweep" : "Start a new run"}
                     </button>
-                    {resume && (
+                    {resume && mode === "range" && (
                       <button onClick={() => start(true)}>
                         Continue loaded run ({resume.history.length} generations)
                       </button>
                     )}
                   </>
                 )}
-                <button disabled={!h.length} onClick={() => download(`evolve-${song.label}-${first}-${last}.run.json`, JSON.stringify(runner.save()))}>
+                <button disabled={!h.length || !!sweep} onClick={() => download(`evolve-${song.label}-${first}-${last}.run.json`, JSON.stringify(runner.save()))}>
                   Save run
                 </button>
                 <label className="ev-file">
@@ -356,7 +452,39 @@ export function EvolvePage() {
         </div>
       </Screen>
 
-      <Screen className="ev-loss" title="Loss" sub="log scale, lower is closer">
+      {sweep && song && (
+        <Screen
+          className="ev-notes"
+          title="Notes"
+          sub={
+            full
+              ? `whole section: loss ${full.eval.loss.toFixed(3)} (default voice ${full.defaultEval.loss.toFixed(3)}), level gap ${full.eval.gap.toFixed(1)} dB`
+              : "outline: as written / filled: as evolved (shift, length, cents; brighter is louder) / amber: the window being evolved"
+          }
+          tools={
+            full && (
+              <>
+                <button className={`chip${playing === "full" ? " on" : ""}`} onClick={() => listen("full", full.picture.samples, 48000, full.clip0)}>
+                  {playing === "full" ? "Stop" : "Hear the whole section"}
+                </button>
+                <button className={`chip${playing === "fullref" ? " on" : ""}`} disabled={!fullRecording} onClick={() => listen("fullref", fullRecording, song.rate, full.clip0)}>
+                  {playing === "fullref" ? "Stop" : "Hear the recording"}
+                </button>
+                <button className={`chip${playing === "fulldef" ? " on" : ""}`} onClick={() => listen("fulldef", full.defaultPicture.samples, 48000, full.clip0)}>
+                  {playing === "fulldef" ? "Stop" : "Hear the default voice"}
+                </button>
+                <button className="chip" onClick={() => download(`chimera-${song.label}-sweep.wav`, wavBlob(full.picture.samples, 48000))}>
+                  Save wav
+                </button>
+              </>
+            )
+          }
+        >
+          <Canvas deps={[tick, playhead]} draw={(c) => drawNotes(c, noteLooks, activeWin, playhead)} />
+        </Screen>
+      )}
+
+      <Screen className="ev-loss" title="Loss" sub={sweep ? "log scale, lower is closer; dashed lines start a new window (a new clip, so the level jumps)" : "log scale, lower is closer"}>
         <Canvas
           deps={[tick]}
           draw={(c) =>
@@ -368,7 +496,7 @@ export function EvolvePage() {
                 { label: "generation best", color: INK.amber, pts: h.map((r) => [r.gen, r.genBest]) },
                 { label: "best so far", color: INK.blue, pts: h.map((r) => [r.gen, r.best]) },
               ],
-              { logY: true },
+              { logY: true, marks: sweep?.marks.map((m) => m + 0.5) },
             )
           }
         />
@@ -410,7 +538,7 @@ export function EvolvePage() {
       </Screen>
 
       <Screen className="ev-genes" title="Genes of the best" sub="rows are knobs, columns generations, blue low and red high in the knob's range">
-        <Canvas deps={[tick]} draw={(c) => drawGenes(c, h, genes.map((g) => g.name))} />
+        <Canvas deps={[tick]} draw={(c) => drawGenes(c, h, chartGenes.map((g) => g.name))} />
       </Screen>
 
       <Screen

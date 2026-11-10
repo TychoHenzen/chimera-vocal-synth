@@ -162,7 +162,7 @@ fn dispatch(st: &mut State, req: &Value) -> Res {
             let wav: Vec<i32> = arg(req, "wav")?;
             let wav: Vec<f64> = wav.into_iter().map(|s| s as f64 / 32768.0).collect();
             let p = chimera::evolve::Problem::new(&notes, arg(req, "first")?, arg(req, "last")?, &wav, arg(req, "rate")?, arg(req, "wavT0")?)?;
-            let out = json!({ "genes": p.spec.genes, "seconds": p.seconds, "clip0": p.clip0, "bands": chimera::evolve::BANDS, "compNames": chimera::evolve::COMP_NAMES, "compWeights": chimera::evolve::COMP_WEIGHTS });
+            let out = json!({ "genes": p.spec.genes, "seconds": p.seconds, "clip0": p.clip0, "bands": chimera::evolve::BANDS, "compNames": chimera::evolve::COMP_NAMES, "compWeights": chimera::evolve::COMP_WEIGHTS, "vowelChoices": chimera::evolve::VOWEL_CHOICES, "nGlobal": chimera::evolve::Spec::n_global() });
             st.evo_problem = Some(p);
             st.evo_cma = None;
             Ok(out)
@@ -181,14 +181,29 @@ fn dispatch(st: &mut State, req: &Value) -> Res {
         }
         "evolveStart" => {
             let p = st.evo_problem.as_ref().ok_or("no evolve problem (evolveProblem first)")?;
+            // optional `start` (a genome, each gene 0..1) and `scales` (per-gene step sizes): a sweep
+            // carries the voice and the overlapping notes' genes from one window of notes to the next
+            let start: Vec<f64> = match req.get("start") {
+                Some(v) if !v.is_null() => serde_json::from_value(v.clone()).map_err(|e| format!("start: {e}"))?,
+                _ => p.spec.start(),
+            };
             let cma = match req.get("state") {
                 Some(v) if !v.is_null() => serde_json::from_value::<chimera::evolve::Cma>(v.clone()).map_err(|e| format!("state: {e}"))?,
-                _ => chimera::evolve::Cma::new(p.spec.start(), arg(req, "sigma")?, arg(req, "pop")?, arg(req, "seed")?),
+                _ => match req.get("scales") {
+                    Some(v) if !v.is_null() => {
+                        let scales: Vec<f64> = serde_json::from_value(v.clone()).map_err(|e| format!("scales: {e}"))?;
+                        if scales.len() != start.len() {
+                            return Err(format!("{} scales for {} genes", scales.len(), start.len()));
+                        }
+                        chimera::evolve::Cma::with_scales(start.clone(), arg(req, "sigma")?, arg(req, "pop")?, arg(req, "seed")?, scales)
+                    }
+                    _ => chimera::evolve::Cma::new(start.clone(), arg(req, "sigma")?, arg(req, "pop")?, arg(req, "seed")?),
+                },
             };
-            if cma.mean.len() != p.spec.dim() {
-                return Err(format!("saved state has {} genes, this song has {}", cma.mean.len(), p.spec.dim()));
+            if cma.mean.len() != p.spec.dim() || start.len() != p.spec.dim() {
+                return Err(format!("saved state or start has {} genes, this song has {}", cma.mean.len().max(start.len()), p.spec.dim()));
             }
-            let out = json!({ "start": p.spec.start(), "generation": cma.generation, "sigma": cma.sigma });
+            let out = json!({ "start": start, "generation": cma.generation, "sigma": cma.sigma, "nGlobal": chimera::evolve::Spec::n_global() });
             st.evo_cma = Some(cma);
             Ok(out)
         }

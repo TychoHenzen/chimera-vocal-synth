@@ -25,7 +25,7 @@ export interface Series {
   pts: [number, number][];
 }
 
-export function drawSeries(c: HTMLCanvasElement, series: Series[], opts: { logY?: boolean; zeroY?: boolean } = {}): void {
+export function drawSeries(c: HTMLCanvasElement, series: Series[], opts: { logY?: boolean; zeroY?: boolean; marks?: number[] } = {}): void {
   const p = prepare(c);
   if (!p) return;
   const { g, w, h } = p;
@@ -64,6 +64,17 @@ export function drawSeries(c: HTMLCanvasElement, series: Series[], opts: { logY?
     g.fillStyle = INK.dim;
     g.fillText(String(Math.round(v * 10) / 10), px(v) - 8, h - 5);
   }
+  // a sweep's window changes, at these x values
+  for (const x of opts.marks ?? []) {
+    if (x < x0 || x > x1) continue;
+    g.strokeStyle = INK.dim;
+    g.setLineDash([3, 3]);
+    g.beginPath();
+    g.moveTo(px(x), m.t);
+    g.lineTo(px(x), h - m.b);
+    g.stroke();
+    g.setLineDash([]);
+  }
   for (const s of series) {
     g.strokeStyle = s.color;
     g.lineWidth = 1.6;
@@ -97,6 +108,85 @@ export function drawGenes(c: HTMLCanvasElement, history: GenRecord[], names: str
   g.fillStyle = INK.dim;
   g.font = `${Math.min(10, Math.max(6, rh))}px system-ui, sans-serif`;
   names.forEach((nm, i) => g.fillText(nm, 2, 2 + i * rh + rh * 0.8));
+}
+
+export interface NoteLook {
+  start: number;
+  end: number;
+  midi: number;
+  text: string;
+  /** "pending" (no window reached it), "active" (in the window being evolved) or "done" */
+  state: "pending" | "active" | "done";
+  /** the note's evolved genes, when a window has reached it */
+  genes: { shift: number; dur: number; cents: number; vowel: string | null; level: number } | null;
+}
+
+/**
+ * The song's notes as a piano roll: each note's written place (outline) and where its genes have
+ * moved it (filled: timing shift and length, pitch in cents, brightness by level), its syllable
+ * below, the window being evolved shaded, and a playhead (song seconds) while the section plays.
+ */
+export function drawNotes(c: HTMLCanvasElement, notes: NoteLook[], win: [number, number] | null, playhead: number | null): void {
+  const p = prepare(c);
+  if (!p || !notes.length) return;
+  const { g, w, h } = p;
+  const m = { l: 8, r: 8, t: 10, b: 34 };
+  const t0 = notes[0].start - 0.3;
+  const t1 = notes[notes.length - 1].end + 0.3;
+  const lo = Math.min(...notes.map((n) => n.midi)) - 1.5;
+  const hi = Math.max(...notes.map((n) => n.midi)) + 1.5;
+  const px = (t: number) => m.l + ((t - t0) / (t1 - t0)) * (w - m.l - m.r);
+  const py = (midi: number) => m.t + ((hi - midi) / (hi - lo)) * (h - m.t - m.b);
+  const lane = Math.max(3, ((h - m.t - m.b) / (hi - lo)) * 0.8);
+  for (let k = Math.ceil(lo); k <= hi; k++) {
+    g.strokeStyle = k % 12 === 0 ? INK.dim : INK.grid;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(m.l, py(k));
+    g.lineTo(w - m.r, py(k));
+    g.stroke();
+  }
+  if (win) {
+    const a = px(notes[win[0]].start - 0.4);
+    const b = px(notes[win[1]].end + 0.5);
+    g.fillStyle = "rgba(255, 179, 64, 0.08)";
+    g.fillRect(a, m.t, b - a, h - m.t - m.b);
+    g.strokeStyle = INK.amber;
+    g.strokeRect(a + 0.5, m.t + 0.5, b - a - 1, h - m.t - m.b - 1);
+  }
+  g.font = "10px system-ui, sans-serif";
+  g.textAlign = "center";
+  notes.forEach((n, k) => {
+    const y = py(n.midi);
+    g.strokeStyle = n.state === "pending" ? INK.grid : INK.dim;
+    g.lineWidth = 1;
+    g.strokeRect(px(n.start) + 0.5, y - lane / 2, Math.max(1, px(n.end) - px(n.start) - 1), lane);
+    const gn = n.genes;
+    if (gn) {
+      const s = n.start + gn.shift;
+      const e = Math.max(s + 0.05, n.end + gn.shift + gn.dur);
+      const yy = py(n.midi + gn.cents / 100);
+      // level -15..+15 dB as 0.25..1 opacity
+      g.globalAlpha = Math.max(0.25, Math.min(1, 0.625 + gn.level / 40));
+      g.fillStyle = n.state === "active" ? INK.amber : INK.blue;
+      g.fillRect(px(s), yy - lane / 2 + 1, Math.max(1, px(e) - px(s) - 1), lane - 2);
+      g.globalAlpha = 1;
+    }
+    // syllables alternate rows so short notes don't overprint
+    const ty = h - m.b + 13 + (k % 2) * 12;
+    const label = gn?.vowel ? `${n.text}>${gn.vowel}` : n.text;
+    g.fillStyle = n.state === "active" ? INK.amber : n.state === "done" ? INK.white : INK.dim;
+    g.fillText(label, px((n.start + n.end) / 2), ty);
+  });
+  g.textAlign = "start";
+  if (playhead !== null && playhead >= t0 && playhead <= t1) {
+    g.strokeStyle = INK.pink;
+    g.lineWidth = 1.5;
+    g.beginPath();
+    g.moveTo(px(playhead), m.t);
+    g.lineTo(px(playhead), h - m.b);
+    g.stroke();
+  }
 }
 
 const colormap = (t: number): [number, number, number] => [

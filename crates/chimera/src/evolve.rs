@@ -31,7 +31,7 @@ pub const PAD_AFTER: f64 = 0.5;
 const VIBRATO_DEFAULT: f64 = 35.0;
 
 /// The vowels a note may be re-sung as.
-const VOWEL_CHOICES: [&str; 13] = ["i", "ɪ", "e", "ɛ", "æ", "a", "ɑ", "ɔ", "o", "ʊ", "u", "ʌ", "ə"];
+pub const VOWEL_CHOICES: [&str; 13] = ["i", "ɪ", "e", "ɛ", "æ", "a", "ɑ", "ɔ", "o", "ʊ", "u", "ʌ", "ə"];
 /// Articulators whose vowel targets get an evolved offset.
 /// Only keys the vowel targets actually carry: an offset on a key a target lacks is never applied
 /// (velum, epilarynx and dorsum were inert genes here before; epilarynx now has its own gene).
