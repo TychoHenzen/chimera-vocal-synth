@@ -30,7 +30,8 @@ pub struct HumanAirway {
     pub pharynx: Tube,
     pub oral: Tube,
     pub nasal: Tube,
-    pub fossa: Tube,
+    /// piriform fossae: closed side branches, one tube each
+    pub fossae: Vec<Tube>,
     pub lungs: usize,
     pub glottis_port: usize,
     pub velum_port: usize,
@@ -74,6 +75,11 @@ pub struct HumanAirway {
 impl HumanAirway {
     /// `fs`: internal sample rate (Hz).
     pub fn new(fs: f64, body: HumanBody) -> Self {
+        Self::with_fossae(fs, body, &[(2.0, 0.9)])
+    }
+
+    /// `fossae`: (depth cm, area cm2) of each piriform fossa, before body scale.
+    pub fn with_fossae(fs: f64, body: HumanBody, fossae: &[(f64, f64)]) -> Self {
         let k = body.scale;
         let tract = HumanVocalTract::new(body);
         let mut net = AirwayNetwork::new(fs);
@@ -106,7 +112,7 @@ impl HumanAirway {
             })
             .collect();
         let nasal = net.add_tube(TubeSpec::new("nasal", n_na, na_len, Area::Profile(na_areas)).wall(Some(WALL_NASAL)).perimeter(3.2).viscous(2.5));
-        let fossa = net.add_tube(TubeSpec::new("piriform", 3, 2.0 * k, Area::Uniform(0.9 * k * k)).wall(Some(WALL_SOFT)).perimeter(1.3));
+        let fossae: Vec<Tube> = fossae.iter().map(|&(len, area)| net.add_tube(TubeSpec::new("piriform", 3, len * k, Area::Uniform(area * k * k)).wall(Some(WALL_SOFT)).perimeter(1.3))).collect();
 
         let lungs = net.add_pressure_node("lungs");
         let tr_a = 2.5 * k * k;
@@ -116,7 +122,9 @@ impl HumanAirway {
         let velum_port = net.add_port(pharynx.last_node(), nasal.first_node(), PortSpec::new(0.0, 1.0 * k).kinetic(0.3, 0.8));
         // piriform fossae branch off ≈2.6 cm above the glottis
         let fossa_node = pharynx.node(((n_ph - 1) as f64).min(js_round((2.6 / 8.8) * n_ph as f64)) as usize);
-        net.connect(fossa_node, fossa.first_node());
+        for f in &fossae {
+            net.connect(fossa_node, f.first_node());
+        }
         // maxillary sinus (Helmholtz) on the nasal cavity
         let sinus = net.add_cavity("sinus", 14.0 * k * k * k, None);
         net.add_port(nasal.node(js_round(n_na as f64 * 0.45) as usize), sinus, PortSpec::new(0.12 * k * k, 0.5 * k).kinetic(0.0, 0.0).no_half_sections());
@@ -131,7 +139,7 @@ impl HumanAirway {
             pharynx,
             oral,
             nasal,
-            fossa,
+            fossae,
             lungs,
             glottis_port,
             velum_port,
