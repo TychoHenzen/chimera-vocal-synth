@@ -22,6 +22,11 @@ use crate::airway::losses::{self, N_SEC, Sections};
 use crate::math::{PI, Rng, cbrt, exp, js_max, js_min, sqrt};
 use crate::physics::{C_SOUND, MU, NU, RE_CRIT, RHO, RHO_C2, WallParams};
 
+/// Shortest stable section (cm) at internal rate `fs`: Courant number 0.93.
+pub fn min_section(fs: f64) -> f64 {
+    C_SOUND / fs / 0.93
+}
+
 /// Initial cross-sectional area(s) of a tube.
 #[derive(Clone, Debug)]
 pub enum Area {
@@ -663,8 +668,11 @@ impl AirwayNetwork {
             };
         }
         if let Some(length) = length {
-            self.tube_length[t.index] = length;
-            let d = length / t.n as f64;
+            // A section shorter than sound travels in one step makes the scheme unstable: it rang
+            // at about 4.7 kHz and grew until the limiter held it (tongue far forward and low left
+            // the oral tube 6.3 cm over nodes sized for 7.3). Such a tube plays slightly longer.
+            let d = js_max(length / t.n as f64, min_section(self.fs));
+            self.tube_length[t.index] = d * t.n as f64;
             for i in 0..t.n {
                 self.dx_target[t.node(i)] = d;
             }

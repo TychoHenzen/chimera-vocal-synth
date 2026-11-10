@@ -6,7 +6,7 @@ use crate::physics::{C_SOUND, RHO, WallParams};
 
 /// Smallest stable section length at this internal rate (CFL 0.93).
 pub fn dx_min(fs: f64) -> f64 {
-    C_SOUND / fs / 0.93
+    crate::airway::network::min_section(fs)
 }
 
 /// Number of sections for a tube: as fine as stability allows, but at least `min`, at most `max`.

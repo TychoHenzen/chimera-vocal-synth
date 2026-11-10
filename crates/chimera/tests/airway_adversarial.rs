@@ -259,3 +259,27 @@ fn fast_but_articulator_limited_closure_gives_bounded_piston_pressure() {
     println!("peakP {peak_p:.1} dyn/cm² (limit {:.1})", 20.0 * CM_H2O);
     assert!(peak_p < 20.0 * CM_H2O);
 }
+
+/// The tongue body dragged far forward and low with the soft palate open left the oral tube
+/// 6.3 cm long over nodes sized for 7.3 cm: sections shorter than one step of sound made the
+/// scheme unstable, and it screeched at about 4.7 kHz at the limiter, on even with the voice off.
+#[test]
+fn a_tube_shorter_than_its_nodes_allow_stays_stable() {
+    use chimera::anatomy::human::{ArticKey, ArticPatch, BODY_MALE};
+    use chimera::voice::human_voice::{HumanVoice, SourcePatch};
+    let mut v = HumanVoice::new(48000.0, BODY_MALE, 2);
+    v.set_source(&SourcePatch::f0(120.0));
+    v.set_gate(1.0);
+    let mut out = vec![0.0f32; 24000];
+    v.render(&mut out);
+    v.set_articulation(&ArticPatch::default().with(ArticKey::TbX, 4.8).with(ArticKey::TbY, 5.0).with(ArticKey::Velum, 0.6), None);
+    v.render(&mut out);
+    v.render(&mut out);
+    let air = &v.airway;
+    let worst = (0..air.oral.n).map(|i| air.net.p[air.oral.node(i)].abs()).fold(0.0, f64::max);
+    let rms = (out.iter().map(|x| (x * x) as f64).sum::<f64>() / out.len() as f64).sqrt();
+    println!("oral tube {:.2} cm, worst oral pressure {worst:.0} dyn/cm2, output rms {rms:.3}", air.or_len);
+    // a voiced vowel's oral pressure stays within a few hundred dyn/cm2; the unstable scheme reached 1e8
+    assert!(worst < 1e4, "oral pressure {worst:.3e}");
+    assert!(rms < 0.25, "output rms {rms:.3} (the screech held it near 0.5)");
+}
