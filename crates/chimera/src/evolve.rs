@@ -961,6 +961,51 @@ mod tests {
         }
     }
 
+    /// Probe, not a gate: which genes move a male voice's 4-10 kHz level against its 0.5-1.5 kHz
+    /// level. Each gene alone at both ends of its range, on a sung E3 "o" and "a".
+    #[test]
+    #[ignore]
+    fn probe_male_high_band() {
+        let spec = Spec::new(1, BodyName::Male);
+        let base: Vec<f64> = spec.genes.iter().map(|g| g.def).collect();
+        let tilt = |out: &[f32]| {
+            let n = 16384;
+            let mid = (0.5 * FS) as usize;
+            let w = hann(n);
+            let mut re: Vec<f64> = (0..n).map(|i| out[mid + i] as f64 * w[i]).collect();
+            let mut im = vec![0.0; n];
+            Fft::new(n).transform(&mut re, &mut im);
+            let band = |lo: f64, hi: f64| {
+                let e: f64 = (0..n / 2)
+                    .filter(|&k| (lo..hi).contains(&(k as f64 * FS / n as f64)))
+                    .map(|k| re[k] * re[k] + im[k] * im[k])
+                    .sum();
+                10.0 * (e + 1e-30).log10()
+            };
+            let low = band(500.0, 1500.0);
+            (band(1500.0, 3000.0) - low, band(3000.0, 4000.0) - low, band(4000.0, 6500.0) - low, band(6500.0, 10000.0) - low)
+        };
+        let names = [
+            "aspiration_scale", "aspiration_hz", "breathiness", "chink_scale", "jitter_scale", "shimmer_scale",
+            "roughness", "epilarynx", "brightness", "sharpness_add", "open_quotient_add", "lung_pressure",
+            "tension", "viscous_scale", "wall_damping_scale", "smooth_wave", "wave_gain", "pressure_scale",
+        ];
+        for syl in ["o", "a"] {
+            let notes = crate::csd::parse(&format!("start,end,midi,syl\n0.0,1.2,52,{syl}\n"), "probe").unwrap();
+            let (z, a, b, c) = tilt(&render(&notes, &base, 1.4, &[], BodyName::Male));
+            eprintln!("{syl} default                 1.5-3k {z:6.1}  3-4k {a:6.1}  4-6.5k {b:6.1}  6.5-10k {c:6.1} dB re 0.5-1.5k");
+            for name in names {
+                let gi = spec.genes.iter().position(|g| g.name == name).unwrap();
+                for end in [spec.genes[gi].lo, spec.genes[gi].hi] {
+                    let mut v = base.clone();
+                    v[gi] = end;
+                    let (z, a, b, c) = tilt(&render(&notes, &v, 1.4, &[], BodyName::Male));
+                    eprintln!("{syl} {name:18} {end:7.2}  1.5-3k {z:6.1}  3-4k {a:6.1}  4-6.5k {b:6.1}  6.5-10k {c:6.1}");
+                }
+            }
+        }
+    }
+
     /// Probe, not a gate: prints band energies for the new tract/noise genes so a change can be seen.
     #[test]
     #[ignore]
