@@ -150,11 +150,13 @@ pub struct VoiceTuning {
     pub aspiration_scale: f64,
     /// upper edge (Hz) of the aspiration noise band
     pub aspiration_hz: f64,
+    /// the glottal pulse's return phase (s), see `GlottisParams::return_time`
+    pub return_time: f64,
 }
 
 impl Default for VoiceTuning {
     fn default() -> Self {
-        VoiceTuning { chink_scale: 1.0, open_quotient_add: 0.0, skew_add: 0.0, sharpness_add: 0.0, jitter_scale: 1.0, shimmer_scale: 1.0, smooth_wave: 0.0, wave_gain: 1.0, pressure_scale: 1.0, gain_db: 0.0, viscous_scale: 1.0, wall_damping_scale: 1.0, aspiration_scale: 1.0, aspiration_hz: crate::voice::human_airway::ASPIRATION_HZ }
+        VoiceTuning { chink_scale: 1.0, open_quotient_add: 0.0, skew_add: 0.0, sharpness_add: 0.0, jitter_scale: 1.0, shimmer_scale: 1.0, smooth_wave: 0.0, wave_gain: 1.0, pressure_scale: 1.0, gain_db: 0.0, viscous_scale: 1.0, wall_damping_scale: 1.0, aspiration_scale: 1.0, aspiration_hz: crate::voice::human_airway::ASPIRATION_HZ, return_time: 0.0 }
     }
 }
 
@@ -427,6 +429,7 @@ impl HumanVoice {
         g.shimmer *= t.shimmer_scale;
         g.smooth_wave = clamp(t.smooth_wave, 0.0, 1.0);
         g.wave_gain = t.wave_gain;
+        g.return_time = js_max(0.0, t.return_time);
         self.output_gain = self.base_output_gain * pow(10.0, t.gain_db / 20.0);
     }
 

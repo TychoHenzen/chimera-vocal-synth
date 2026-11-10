@@ -51,6 +51,10 @@ pub struct GlottisParams {
     pub smooth_wave: f64,
     /// area gain of the continuous wave (a smoother source radiates less, so it needs more flow)
     pub wave_gain: f64,
+    /// return phase (s): how long the folds take to finish closing after their fastest closing
+    /// motion. The LF model's Ta: it adds a -6 dB/octave roll-off above 1/(2 pi Ta), so a sharp
+    /// closure can excite 1.5-4 kHz without lifting everything above as well. 0 = none.
+    pub return_time: f64,
 }
 
 pub const DEFAULT_GLOTTIS: GlottisParams = GlottisParams {
@@ -73,6 +77,7 @@ pub const DEFAULT_GLOTTIS: GlottisParams = GlottisParams {
     chaos: 0.0,
     smooth_wave: 0.0,
     wave_gain: 1.0,
+    return_time: 0.0,
 };
 
 #[derive(Clone, Debug)]
@@ -109,6 +114,10 @@ pub struct ParametricGlottis {
     closure_sm: f64,
     amp_sm: f64,
     sm_coef: f64,
+    /// the pulse after the return-phase smoothing, and that smoothing's coefficient for `ret_for`
+    ret_y: f64,
+    ret_coef: f64,
+    ret_for: f64,
 }
 
 impl ParametricGlottis {
@@ -139,6 +148,9 @@ impl ParametricGlottis {
             closure_sm: 0.0,
             amp_sm: 0.0,
             sm_coef: 1.0 - exp(-1.0 / (0.004 * fs)),
+            ret_y: 0.0,
+            ret_coef: 1.0,
+            ret_for: 0.0,
         }
     }
 
@@ -220,6 +232,20 @@ impl ParametricGlottis {
             if ph2 > 0.0 {
                 pulse += 0.55 * smoothstep(0.3, 0.8, p.fry) * shape(ph2, oq * 0.8, p.skew, p.closure_sharpness);
             }
+        }
+        // ASSUMPTION: the return phase is a one-pole smoothing of the whole pulse with time constant
+        // Ta. That is the LF return phase's effect on the spectrum; it also delays the opening by
+        // Ta (tens of microseconds), which nothing listens for. The closure's corner becomes an
+        // exponential landing that reaches into the closed phase.
+        if p.return_time > 0.0 {
+            if p.return_time != self.ret_for {
+                self.ret_for = p.return_time;
+                self.ret_coef = 1.0 - exp(-1.0 / (p.return_time * self.fs));
+            }
+            self.ret_y += self.ret_coef * (pulse - self.ret_y);
+            pulse = self.ret_y;
+        } else {
+            self.ret_y = pulse;
         }
         let effort_scale = 0.45 + 0.75 * p.effort;
         let sc = self.sm_coef;

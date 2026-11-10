@@ -106,7 +106,10 @@ const G_ASP_HZ: usize = 33;
 /// How far the epilarynx tube above the folds is narrowed on every vowel (0 wide, 1 narrowest).
 /// A narrow tube opening into a wide pharynx rings near 3-4 kHz (the singer's-formant cluster).
 const G_EPI: usize = 34;
-const G_ARTIC: usize = 35;
+/// The glottal pulse's return phase (s): a roll-off above 1/(2 pi Ta), so the closure's sharpness
+/// can brighten 1.5-4 kHz without lifting 4-10 kHz with it.
+const G_RETURN: usize = 35;
+const G_ARTIC: usize = 36;
 const G_NOTES: usize = G_ARTIC + ARTIC_OFFSETS.len();
 const PER_NOTE: usize = 5;
 /// Seconds over which each note's wobble grows from nothing.
@@ -157,6 +160,7 @@ impl Spec {
         g("aspiration_scale", 0.2, 8.0, 1.0);
         g("aspiration_hz", 2500.0, 9000.0, crate::voice::human_airway::ASPIRATION_HZ);
         g("epilarynx", 0.0, 0.95, 0.0);
+        g("return_time_s", 0.0, 0.0005, 0.0);
         for k in ARTIC_OFFSETS {
             g(&format!("vowel_{}", k.name()), -0.2, 0.2, 0.0);
         }
@@ -308,6 +312,7 @@ fn render(notes: &[Note], v: &[f64], seconds: f64, f0: &[f64], singer: BodyName)
         wall_damping_scale: v[G_WALL],
         aspiration_scale: v[G_ASPIRATION],
         aspiration_hz: v[G_ASP_HZ],
+        return_time: v[G_RETURN],
     });
     voice.set_source(&SourcePatch {
         f0: Some(midi_to_hz(notes[0].midi)),
@@ -1002,6 +1007,44 @@ mod tests {
                     let (z, a, b, c) = tilt(&render(&notes, &v, 1.4, &[], BodyName::Male));
                     eprintln!("{syl} {name:18} {end:7.2}  1.5-3k {z:6.1}  3-4k {a:6.1}  4-6.5k {b:6.1}  6.5-10k {c:6.1}");
                 }
+            }
+        }
+    }
+
+    /// Brightening the closure (sharpness, brightness) lifted a male voice's 1.5-4 kHz and 4-10 kHz
+    /// together, so a render matched at 2-3 kHz was about 10 dB too strong at 4-6.5 kHz. The return
+    /// phase must cut 4-6.5 kHz clearly more than 1.5-3 kHz on that bright voice.
+    #[test]
+    fn return_time_cuts_highs_more_than_mids() {
+        let spec = Spec::new(1, BodyName::Male);
+        let mut v: Vec<f64> = spec.genes.iter().map(|g| g.def).collect();
+        v[G_SHARP] = 0.5;
+        v[G_BRIGHT] = 1.0;
+        let notes = crate::csd::parse("start,end,midi,syl\n0.0,1.2,52,o\n", "probe").unwrap();
+        let bands = |v: &[f64]| {
+            let out = render(&notes, v, 1.4, &[], BodyName::Male);
+            let n = 16384;
+            let mid = (0.5 * FS) as usize;
+            let w = hann(n);
+            let mut re: Vec<f64> = (0..n).map(|i| out[mid + i] as f64 * w[i]).collect();
+            let mut im = vec![0.0; n];
+            Fft::new(n).transform(&mut re, &mut im);
+            let band = |lo: f64, hi: f64| {
+                let e: f64 = (0..n / 2).filter(|&k| (lo..hi).contains(&(k as f64 * FS / n as f64))).map(|k| re[k] * re[k] + im[k] * im[k]).sum();
+                10.0 * (e + 1e-30).log10()
+            };
+            [band(500.0, 1500.0), band(1500.0, 3000.0), band(4000.0, 6500.0), band(6500.0, 10000.0)]
+        };
+        let b0 = bands(&v);
+        for ta in [0.00005, 0.0001, 0.0002] {
+            v[G_RETURN] = ta;
+            let b = bands(&v);
+            let d: Vec<f64> = b.iter().zip(&b0).map(|(x, y)| x - y).collect();
+            eprintln!("Ta {:.2} ms: 0.5-1.5k {:+.1}  1.5-3k {:+.1}  4-6.5k {:+.1}  6.5-10k {:+.1} dB", ta * 1000.0, d[0], d[1], d[2], d[3]);
+            if ta == 0.0001 {
+                let mids = d[1] - d[0];
+                let highs = d[2] - d[0];
+                assert!(highs < mids - 4.0, "Ta 0.1 ms: 4-6.5k moved {highs:.1} dB, 1.5-3k {mids:.1} dB, relative to 0.5-1.5k");
             }
         }
     }
