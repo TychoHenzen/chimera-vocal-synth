@@ -155,6 +155,27 @@ export function sweepWindows(n: number, size: number, overlap: number): [number,
 
 const unit = (g: Gene) => (g.def - g.lo) / (g.hi - g.lo);
 
+/**
+ * A sweep window's genomes. `start` is where the window's search begins: the voice evolved so far
+ * (`voice`, empty before the first window) and each note's carried genes. `untouched` is every
+ * gene at its default, which is what "Hear default voice" plays. Playing `start` there played the
+ * previous windows' evolved voice under the default's name.
+ */
+export function windowGenomes(genes: Gene[], nGlobal: number, voice: number[], noteX: (number[] | null)[], first: number, last: number, index: number): { start: number[]; scales: number[]; untouched: number[] } {
+  const untouched = genes.map(unit);
+  const start = voice.length ? voice.slice() : untouched.slice(0, nGlobal);
+  // ASSUMPTION: after the first window the voice only needs fine steps (0.35 of the new
+  // notes'), and notes carried from the last window half steps; untuned guesses.
+  const scales = new Array<number>(nGlobal).fill(index === 0 ? 1 : 0.35);
+  for (let k = first; k <= last; k++) {
+    const carried = noteX[k];
+    const b = nGlobal + (k - first) * PER_NOTE;
+    start.push(...(carried ?? untouched.slice(b, b + PER_NOTE)));
+    scales.push(...new Array<number>(PER_NOTE).fill(carried ? 0.5 : 1));
+  }
+  return { start, scales, untouched };
+}
+
 /** Generations over which a window's best must still be improving. */
 export const PLATEAU_GENS = 20;
 /**
@@ -374,18 +395,7 @@ export class EvolveRunner {
         const problem = { notes: cfg.notes, first, last, wav: Array.from(wav), rate: cfg.rate, wavT0, body: cfg.body };
         const info = call<ProblemInfo>("evolveProblem", problem);
         const ng = info.nGlobal;
-        const def = info.genes.map(unit);
-        if (!sw.voice.length) sw.voice = def.slice(0, ng);
-        const start = sw.voice.slice();
-        // ASSUMPTION: after the first window the voice only needs fine steps (0.35 of the new
-        // notes'), and notes carried from the last window half steps; untuned guesses.
-        const scales = new Array<number>(ng).fill(sw.index === 0 ? 1 : 0.35);
-        for (let k = first; k <= last; k++) {
-          const carried = sw.noteX[k];
-          const b = ng + (k - first) * PER_NOTE;
-          start.push(...(carried ?? def.slice(b, b + PER_NOTE)));
-          scales.push(...new Array<number>(PER_NOTE).fill(carried ? 0.5 : 1));
-        }
+        const { start, scales, untouched } = windowGenomes(info.genes, ng, sw.voice, sw.noteX, first, last, sw.index);
         call("evolveStart", { sigma: cfg.sigma, pop: cfg.pop, seed: cfg.seed + sw.index, start, scales });
         this.info = info;
         this.startX = start;
@@ -397,7 +407,7 @@ export class EvolveRunner {
         this.best = e;
         this.bestX = start.slice();
         pool
-          .send<Picture>(0, { type: "render", x: start })
+          .send<Picture>(0, { type: "render", x: untouched })
           .then((p) => {
             this.defaultPicture = p;
             this.emit();
