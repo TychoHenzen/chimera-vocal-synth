@@ -106,7 +106,7 @@ const G_ASP_HZ: usize = 33;
 /// How far the epilarynx tube above the folds is narrowed on every vowel (0 wide, 1 narrowest).
 /// A narrow tube opening into a wide pharynx rings near 3-4 kHz (the singer's-formant cluster).
 const G_EPI: usize = 34;
-/// The glottal pulse's return phase (s): a roll-off above 1/(2 pi Ta), so the closure's sharpness
+/// The glottal pulse's return phase (ms): a roll-off above 1/(2 pi Ta), so the closure's sharpness
 /// can brighten 1.5-4 kHz without lifting 4-10 kHz with it.
 const G_RETURN: usize = 35;
 const G_ARTIC: usize = 36;
@@ -160,7 +160,7 @@ impl Spec {
         g("aspiration_scale", 0.2, 8.0, 1.0);
         g("aspiration_hz", 2500.0, 9000.0, crate::voice::human_airway::ASPIRATION_HZ);
         g("epilarynx", 0.0, 0.95, 0.0);
-        g("return_time_s", 0.0, 0.0005, 0.0);
+        g("return_time_ms", 0.0, 0.5, 0.0);
         for k in ARTIC_OFFSETS {
             g(&format!("vowel_{}", k.name()), -0.2, 0.2, 0.0);
         }
@@ -312,7 +312,7 @@ fn render(notes: &[Note], v: &[f64], seconds: f64, f0: &[f64], singer: BodyName)
         wall_damping_scale: v[G_WALL],
         aspiration_scale: v[G_ASPIRATION],
         aspiration_hz: v[G_ASP_HZ],
-        return_time: v[G_RETURN],
+        return_time: 0.001 * v[G_RETURN],
     });
     voice.set_source(&SourcePatch {
         f0: Some(midi_to_hz(notes[0].midi)),
@@ -1036,12 +1036,12 @@ mod tests {
             [band(500.0, 1500.0), band(1500.0, 3000.0), band(4000.0, 6500.0), band(6500.0, 10000.0)]
         };
         let b0 = bands(&v);
-        for ta in [0.00005, 0.0001, 0.0002] {
+        for ta in [0.05, 0.1, 0.2] {
             v[G_RETURN] = ta;
             let b = bands(&v);
             let d: Vec<f64> = b.iter().zip(&b0).map(|(x, y)| x - y).collect();
-            eprintln!("Ta {:.2} ms: 0.5-1.5k {:+.1}  1.5-3k {:+.1}  4-6.5k {:+.1}  6.5-10k {:+.1} dB", ta * 1000.0, d[0], d[1], d[2], d[3]);
-            if ta == 0.0001 {
+            eprintln!("Ta {ta:.2} ms: 0.5-1.5k {:+.1}  1.5-3k {:+.1}  4-6.5k {:+.1}  6.5-10k {:+.1} dB", d[0], d[1], d[2], d[3]);
+            if ta == 0.1 {
                 let mids = d[1] - d[0];
                 let highs = d[2] - d[0];
                 assert!(highs < mids - 4.0, "Ta 0.1 ms: 4-6.5k moved {highs:.1} dB, 1.5-3k {mids:.1} dB, relative to 0.5-1.5k");

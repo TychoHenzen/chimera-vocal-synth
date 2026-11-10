@@ -165,6 +165,7 @@ export function EvolvePage() {
   const [winSize, setWinSize] = useState(6);
   const [overlap, setOverlap] = useState(2);
   const [gens, setGens] = useState(30);
+  const [maxGens, setMaxGens] = useState(200);
   /** song seconds under the playhead while a whole-section clip plays */
   const [playhead, setPlayhead] = useState<number | null>(null);
   /** where Save wav put the last render */
@@ -225,7 +226,7 @@ export function EvolvePage() {
   const start = (withResume: boolean) => {
     if (!song || !clip) return;
     if (mode === "sweep") {
-      void runner.startSweep({ notes: song.notes, body, samples: song.samples, rate: song.rate, window: winSize, overlap, gens, pop, sigma, seed, workers, label: song.label });
+      void runner.startSweep({ notes: song.notes, body, samples: song.samples, rate: song.rate, window: winSize, overlap, gens, maxGens, pop, sigma, seed, workers, label: song.label });
       return;
     }
     void runner.start({
@@ -375,11 +376,15 @@ export function EvolvePage() {
                       <input type="number" min={0} max={winSize - 1} value={overlap} disabled={runner.running} onChange={(e) => setOverlap(Math.max(0, Math.min(winSize - 1, Number(e.target.value))))} />
                     </label>
                     <label>
-                      Generations per window
+                      Generations per window, at least
                       <input type="number" min={1} max={500} value={gens} disabled={runner.running} onChange={(e) => setGens(Math.max(1, Number(e.target.value)))} />
                     </label>
+                    <label>
+                      at most
+                      <input type="number" min={gens} max={2000} value={maxGens} disabled={runner.running} onChange={(e) => setMaxGens(Math.max(gens, Number(e.target.value)))} />
+                    </label>
                     <span className="hint">
-                      {windows.length} windows over {song.notes.length} notes; the first gets {gens * 2} generations (it also finds the voice)
+                      {windows.length} windows over {song.notes.length} notes. A window moves on once its best has stopped improving and the population has closed in; the first gets twice the generations (it also finds the voice)
                     </span>
                   </>
                 )}

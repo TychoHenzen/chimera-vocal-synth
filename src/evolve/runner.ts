@@ -99,8 +99,12 @@ export interface SweepConfig {
   /** notes per window, and how many of them the next window evolves again */
   window: number;
   overlap: number;
-  /** generations per window (the first window, which also finds the voice, gets twice as many) */
+  /**
+   * generations per window before it may move on, and the most it gets (the first window, which
+   * also finds the voice, gets twice both); between the two it moves on once `windowConverged`
+   */
   gens: number;
+  maxGens: number;
   pop: number;
   sigma: number;
   seed: number;
@@ -150,6 +154,24 @@ export function sweepWindows(n: number, size: number, overlap: number): [number,
 }
 
 const unit = (g: Gene) => (g.def - g.lo) / (g.hi - g.lo);
+
+/** Generations over which a window's best must still be improving. */
+export const PLATEAU_GENS = 20;
+/**
+ * Whether a window's run (its generation records, oldest first) has settled: over the last
+ * PLATEAU_GENS generations the best loss fell by under 0.5 %, and the generation's median candidate
+ * is within 2 % of its best, so the population has closed in on one voice. A fixed generation
+ * count moved on while the best was still falling and the population was still spread wide.
+ * ASSUMPTION: 0.5 % and 2 % are guesses, not tuned against runs.
+ */
+export function windowConverged(h: GenRecord[]): boolean {
+  if (h.length <= PLATEAU_GENS) return false;
+  const now = h[h.length - 1];
+  const then = h[h.length - 1 - PLATEAU_GENS];
+  const gain = (then.best - now.best) / then.best;
+  const spread = (now.median - now.genBest) / now.genBest;
+  return gain < 0.005 && spread < 0.02;
+}
 
 export interface SavedRun {
   version: 1;
@@ -381,7 +403,8 @@ export class EvolveRunner {
             this.emit();
           })
           .catch(() => {});
-        const r = await this.generations(pool, n, sw.index === 0 ? cfg.gens * 2 : cfg.gens, evals + 1, elapsed, (x) => x.slice(0, ng), sw.index);
+        const twice = sw.index === 0 ? 2 : 1;
+        const r = await this.generations(pool, n, cfg.maxGens * twice, evals + 1, elapsed, (x) => x.slice(0, ng), sw.index, cfg.gens * twice);
         evals = r.evals;
         elapsed = r.elapsed;
         sw.voice = this.bestX.slice(0, ng);
@@ -471,10 +494,12 @@ export class EvolveRunner {
 
   /**
    * Ask, score in the pool, tell, until stopped (or after `maxGens` generations, or a sweep's
-   * skip), keeping the best and a record per generation; returns the running totals.
+   * skip, or once a sweep's window has had `minGens` and `windowConverged`), keeping the best and
+   * a record per generation; returns the running totals.
    */
-  private async generations(pool: Pool, n: number, maxGens: number, evals0: number, elapsed0: number, keep: (x: number[]) => number[], window?: number): Promise<{ evals: number; elapsed: number }> {
+  private async generations(pool: Pool, n: number, maxGens: number, evals0: number, elapsed0: number, keep: (x: number[]) => number[], window?: number, minGens = Infinity): Promise<{ evals: number; elapsed: number }> {
     this.evals = evals0;
+    const first = this.history.length;
     const t0 = performance.now();
     let lastPicture = -1e9;
     const requestPicture = (force: boolean) => {
@@ -533,6 +558,7 @@ export class EvolveRunner {
       });
       if (improved) requestPicture(false);
       this.emit();
+      if (g + 1 >= minGens && windowConverged(this.history.slice(first))) break;
     }
     requestPicture(true);
     // let the last picture arrive before the window (or the run) moves on
