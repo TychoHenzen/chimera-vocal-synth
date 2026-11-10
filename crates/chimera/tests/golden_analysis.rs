@@ -1,8 +1,9 @@
 //! The frequency-domain oracle and the analysis code against the TypeScript engine
 //! (fixtures from `bun tools/golden/analysis.ts`): the UI's transfer-function/formant pipeline on
 //! the human airway, simple tube networks, findPeaks, FFT, LPC, YIN and Nelder–Mead. The human
-//! airway's cases follow the tract geometry, so `CHIMERA_BLESS=1` rewrites them after an intended
-//! geometry change; everything else stays the TypeScript engine's.
+//! airway's cases and the simple networks follow the airway model (geometry and wall losses), so
+//! `CHIMERA_BLESS=1` rewrites them after an intended change to it; everything else stays the
+//! TypeScript engine's.
 mod common;
 use chimera::airway::frequency::{Peak, find_peaks, linspace, transfer_function};
 use chimera::airway::network::{AirwayNetwork, Area, PortSpec, TubeSpec};
@@ -130,22 +131,29 @@ fn analysis_matches_typescript() {
         }
     }
     assert!(n_formants >= 90, "formant readouts: {n_formants}");
-    if bless_it {
-        save_json("analysis", &g);
-    }
 
     // ---- simple networks
     let net_freqs = linspace(20.0, 6000.0, 700);
     rep.check("linspace", "netFreqs", &nums(&g["netFreqs"]), &net_freqs, 1.0);
-    let nets = g["nets"].as_array().unwrap();
     let built = networks();
+    let nets = g["nets"].as_array_mut().unwrap();
     assert_eq!(nets.len(), built.len());
-    for (c, (net, inject, cut)) in nets.iter().zip(&built) {
-        let label = c["name"].as_str().unwrap();
+    for (c, (net, inject, cut)) in nets.iter_mut().zip(&built) {
+        let label = c["name"].as_str().unwrap().to_string();
         let tf = transfer_function(&net.linear_elements(), *inject, &net_freqs, cut);
-        rep.check("network |H|", label, &nums(&c["mag"]), &tf.mag, 1e-12);
-        rep.check("network pressure dB", label, &nums(&c["pressureDb"]), &tf.pressure_db, 1e-6);
-        rep.peaks("network peaks", label, &c["peaks"], &find_peaks(&net_freqs, &tf.mag, 80.0));
+        let peaks = find_peaks(&net_freqs, &tf.mag, 80.0);
+        if bless_it {
+            c["mag"] = json!(tf.mag);
+            c["pressureDb"] = json!(tf.pressure_db);
+            c["peaks"] = json!(peaks.iter().map(|p| [p.freq, p.bw, p.db]).collect::<Vec<_>>());
+            continue;
+        }
+        rep.check("network |H|", &label, &nums(&c["mag"]), &tf.mag, 1e-12);
+        rep.check("network pressure dB", &label, &nums(&c["pressureDb"]), &tf.pressure_db, 1e-6);
+        rep.peaks("network peaks", &label, &c["peaks"], &peaks);
+    }
+    if bless_it {
+        save_json("analysis", &g);
     }
 
     // ---- findPeaks edge cases

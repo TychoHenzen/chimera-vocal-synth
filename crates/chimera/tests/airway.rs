@@ -76,8 +76,12 @@ fn fdtd_impulse_response_agrees_with_frequency_domain_model() {
         for r in &reference {
             let g = nearest(&got, r.freq);
             let e = (g.freq - r.freq).abs() / r.freq;
-            println!("walls={walls}: {:.2} vs {:.2} Hz ({:.3} %)", g.freq, r.freq, 100.0 * e);
+            // bandwidths: the boundary-layer sections (trapezoid rule in the FDTD, continuous
+            // time in the solver) must lose the same energy per cycle
+            let eb = (g.bw - r.bw).abs() / r.bw;
+            println!("walls={walls}: {:.2} vs {:.2} Hz ({:.3} %), bw {:.1} vs {:.1} Hz", g.freq, r.freq, 100.0 * e, g.bw, r.bw);
             assert!(e < 0.012);
+            assert!(eb < 0.05,"bandwidth {:.1} vs {:.1} Hz", g.bw, r.bw);
         }
     }
 }

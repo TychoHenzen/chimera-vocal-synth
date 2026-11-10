@@ -2,8 +2,8 @@
 //! time: which part makes which peak. Peaks of |U_lips+nose / U_glottis| on a 5 Hz grid.
 //!
 //! `cargo run --release -q -p chimera --example tract_probe -- [male|female] [variant]`
-//! variants: base, nofossa (piriform fossae closed), epi1 (epilarynx fully narrowed), visc4k
-//! (viscous loss taken at 4 kHz, not 700 Hz), ph<x> (pharynx x times as long), sweep (mean F1-F4
+//! variants: base, nofossa (piriform fossae closed), epi1 (epilarynx fully narrowed), ph<x>
+//! (pharynx x times as long), sweep (mean F1-F4
 //! over the vowels for a grid of pharynx lengths and epilarynx settings), ring (what the UI's
 //! Ring setting adds at 2.4-3.6 kHz)
 use chimera::airway::frequency::{find_peaks, transfer_function, Peak};
@@ -27,9 +27,6 @@ fn peaks(body: HumanBody, body_name: &str, ipa: &str, variant: &str, epi: Option
     if variant == "nofossa" {
         let z = vec![0.0; air.fossa.n];
         air.net.set_tube_targets(air.fossa, &z, None, None);
-    }
-    if variant == "visc4k" {
-        air.net.viscous_omega = 2.0 * std::f64::consts::PI * 4000.0;
     }
     let el = air.net.linear_elements();
     let h = transfer_function(&el, air.pharynx.first_node(), &freqs, &[air.glottis_port]);

@@ -5,6 +5,7 @@
 //! Complex arithmetic is written out on separate real/imaginary parts exactly as the
 //! TypeScript did, so every operation (and its rounding) is the same.
 
+use crate::airway::losses;
 use crate::airway::network::LinearElements;
 use crate::math::{PI, hypot, js_max, log10, sqrt};
 use crate::physics::{C_SOUND, RHO};
@@ -90,10 +91,12 @@ pub fn transfer_function(el: &LinearElements, inject: usize, freqs: &[f64], cut:
 
     for f in 0..nf {
         let w = 2.0 * PI * js_max(freqs[f], 1e-3);
+        let (fv_r, fv_i) = losses::factor(w, true);
+        let (fh_r, fh_i) = losses::factor(w, false);
         // shunt admittances
         for &k in &order {
-            let mut gr = 0.0;
-            let mut gi = w * el.c[k];
+            let mut gr = el.g_heat[k] * fh_r;
+            let mut gi = w * el.c[k] + el.g_heat[k] * fh_i;
             w_yr[k] = 0.0;
             w_yi[k] = 0.0;
             if el.wall_area[k] > 0.0 {
@@ -128,8 +131,8 @@ pub fn transfer_function(el: &LinearElements, inject: usize, freqs: &[f64], cut:
             let k = order[q];
             let j = parent_branch[k];
             // Y_eq = Y / (1 + Z·Y), Z = R + jωL
-            let zr = el.r[j];
-            let zi = w * el.l[j];
+            let zr = el.r[j] + el.r_visc[j] * fv_r;
+            let zi = w * el.l[j] + el.r_visc[j] * fv_i;
             let dr = 1.0 + zr * yr[k] - zi * yi[k];
             let di = zr * yi[k] + zi * yr[k];
             let dd = dr * dr + di * di;
@@ -154,8 +157,8 @@ pub fn transfer_function(el: &LinearElements, inject: usize, freqs: &[f64], cut:
                 let j = parent_branch[k];
                 let ir = pr[m] * er[k] - pi[m] * ei[k];
                 let ii = pr[m] * ei[k] + pi[m] * er[k];
-                let zr = el.r[j];
-                let zi = w * el.l[j];
+                let zr = el.r[j] + el.r_visc[j] * fv_r;
+                let zi = w * el.l[j] + el.r_visc[j] * fv_i;
                 pr[k] = pr[m] - (zr * ir - zi * ii);
                 pi[k] = pi[m] - (zr * ii + zi * ir);
             }

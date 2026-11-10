@@ -20,8 +20,12 @@ When a test fails after an **intended** change to the sound, the plans or the tr
   --no-fail-fast`, run twice (`engine.rs` reads a fixture `golden_planning` writes): the
   human-voice audio (`voice-*.f32`, `beatbox-bar.f32`), the plans in `planning.json` (utterances,
   durations, phrases, songs, live notes, beat sounds, the beat player), `geometry.json`, and the
-  human airway's cases in `analysis.json`. They are snapshots of this engine now.
+  human airway's cases and the simple tube networks in `analysis.json`, and the creatures
+  (`creatures.json`, `creatures.f32`: they share the airway network, so its loss model changes
+  them too; the test still requires every call to stay finite and audible). They are snapshots of
+  this engine now.
 - **The rest** still records the TypeScript engine's behaviour: the beat notation, the phonetics
-  text, the creatures, and the analysis code's own cases (networks, FFT, LPC, YIN, Nelder–Mead).
+  text, the creature valves (`creature-units.json`), and the analysis code's own cases (findPeaks,
+  FFT, LPC, YIN, Nelder-Mead).
   Either update the expectation the change affects, or remove the case and add a behavioural test
   (`tests/*.rs`) for what the change is meant to do.

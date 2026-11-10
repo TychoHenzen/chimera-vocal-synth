@@ -10,6 +10,7 @@ pub mod physics;
 pub mod airway {
     pub mod decimator;
     pub mod frequency;
+    pub mod losses;
     pub mod network;
 }
 

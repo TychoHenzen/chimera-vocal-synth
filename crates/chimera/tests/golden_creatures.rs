@@ -1,4 +1,5 @@
-//! The creatures against the TypeScript engine: every call of every creature, pitched calls,
+//! The creatures against their fixtures (the TypeScript engine's, re-blessed from Rust after
+//! intended airway changes): every call of every creature, pitched calls,
 //! parameter changes on a held gate, stops, initial parameters and a 96 kHz case, rendered in
 //! several block sizes (the output must not depend on them), plus telemetry snapshots and the
 //! valve sources sample by sample. Fixtures from `bun tools/golden/creatures.ts`.
@@ -89,6 +90,13 @@ struct Outcome {
     diff: AudioDiff,
     env_db: f64,
     tel: f64,
+    /// what a bless writes: the kept windows, the whole render's window RMS, the snapshots
+    kept: Vec<f32>,
+    env: Vec<f64>,
+    snaps: Vec<Value>,
+    /// loudest 10 ms window RMS of the whole render, and whether every sample is finite
+    loudest: f64,
+    finite: bool,
 }
 
 fn check(s: &Value, audio: &[f32]) -> Outcome {
@@ -111,12 +119,16 @@ fn check(s: &Value, audio: &[f32]) -> Outcome {
         let (k, abs) = starts.iter().rev().find(|(k, _)| *k <= i).unwrap();
         (abs + i - k) as f64 / num(&s["fsOut"])
     });
-    // the whole render's envelope against the TS window RMS
-    let env = nums(&s["env"]);
+    // the whole render's envelope against the fixture's window RMS
+    let reference_env = nums(&s["env"]);
+    let env: Vec<f64> = (0..reference_env.len())
+        .map(|wi| {
+            let c = &got[wi * win..((wi + 1) * win).min(got.len())];
+            (c.iter().map(|x| (*x as f64).powi(2)).sum::<f64>() / c.len() as f64).sqrt()
+        })
+        .collect();
     let mut env_db = 0.0f64;
-    for (wi, e) in env.iter().enumerate() {
-        let c = &got[wi * win..((wi + 1) * win).min(got.len())];
-        let r = (c.iter().map(|x| (*x as f64).powi(2)).sum::<f64>() / c.len() as f64).sqrt();
+    for (r, e) in env.iter().zip(&reference_env) {
         if r.max(*e) / d.peak < 1e-3 {
             continue;
         }
@@ -124,18 +136,25 @@ fn check(s: &Value, audio: &[f32]) -> Outcome {
     }
     let refs = s["snaps"].as_array().unwrap();
     assert_eq!(snaps.len(), refs.len(), "{name}: snapshot count");
-    let tel = snaps.iter().zip(refs).map(|(t, r)| telemetry_diff(name, t, r)).fold(0.0, f64::max);
+    let tel = if blessing() { 0.0 } else { snaps.iter().zip(refs).map(|(t, r)| telemetry_diff(name, t, r)).fold(0.0, f64::max) };
     let line = format!("{name:>24}: peak {:.3} max err {:.2e} first >1e-6 at {first:?} s, kept-window env {:.4} dB, full env {env_db:.4} dB, telemetry {tel:.1e}", d.peak, d.max_err, d.env_db);
     for block in [1usize, 77, 4096] {
         assert!(run(s, block).0 == got, "{name}: block size {block} changed the output");
     }
-    Outcome { name: name.to_string(), line, diff: d, env_db, tel }
+    let loudest = env.iter().cloned().fold(0.0, f64::max);
+    let finite = got.iter().all(|x| x.is_finite());
+    let snaps = snaps.iter().map(|t| serde_json::to_value(t).unwrap()).collect();
+    Outcome { name: name.to_string(), line, diff: d, env_db, tel, kept, env, snaps, loudest, finite }
 }
 
+/// The fixtures began as the TypeScript engine's output. The creatures share the airway network
+/// with the voice, so an intended change to it (the boundary-layer losses, say) re-blesses them:
+/// `CHIMERA_BLESS=1` writes the Rust render. So that a bless cannot lock in a broken creature,
+/// every scenario must stay finite and audible either way.
 #[test]
 fn creatures_match_typescript() {
-    let scenarios = load("creatures");
-    let audio = load_f32("creatures");
+    let mut scenarios = load("creatures");
+    let mut audio = load_f32("creatures");
     let list = scenarios.as_array().unwrap();
     // scenarios are independent: render them on all cores
     let outcomes: Vec<Outcome> = std::thread::scope(|sc| {
@@ -144,6 +163,23 @@ fn creatures_match_typescript() {
     });
     for o in &outcomes {
         println!("{}", o.line);
+    }
+    for o in &outcomes {
+        assert!(o.finite, "{}: non-finite output", o.name);
+        // ASSUMPTION: 0.01 RMS in the loudest 10 ms (-40 dBFS) is the floor of a call that sounds;
+        // the quietest scenario (seal-call-chug, peak 0.09) has a loudest window well above it.
+        assert!(o.loudest > 0.01, "{}: loudest window RMS {:.2e}, the call is (nearly) silent", o.name, o.loudest);
+    }
+    if blessing() {
+        for (s, o) in scenarios.as_array_mut().unwrap().iter_mut().zip(&outcomes) {
+            let off = s["offset"].as_u64().unwrap() as usize;
+            audio[off..off + o.kept.len()].copy_from_slice(&o.kept);
+            s["env"] = serde_json::json!(o.env);
+            s["snaps"] = Value::Array(o.snaps.clone());
+        }
+        save_json("creatures", &scenarios);
+        save_f32("creatures", &audio);
+        return;
     }
     for o in &outcomes {
         assert_close(&o.name, &o.diff);

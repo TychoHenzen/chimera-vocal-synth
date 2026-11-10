@@ -220,7 +220,7 @@ fn beat_sounds_match_typescript() {
     let mut f = load("planning");
     let mut st = Stats::default();
     let bless_it = blessing();
-    let mut cmp = |path: &str, want: &mut Value, got: Value, st: &mut Stats| if bless_it { *want = got } else { cmp(path, want, &got, st) };
+    let cmp = |path: &str, want: &mut Value, got: Value, st: &mut Stats| if bless_it { *want = got } else { cmp(path, want, &got, st) };
     let sounds = f["sounds"].as_array_mut().unwrap();
     assert_eq!(sounds.len(), BEAT_SOUNDS.len());
     for (s, want) in BEAT_SOUNDS.iter().zip(sounds) {

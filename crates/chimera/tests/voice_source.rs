@@ -29,7 +29,7 @@ fn brightness_tilts_the_voice_and_its_default_changes_nothing() {
     v.set_source(&SourcePatch { tension: Some(0.55), ..Default::default() });
     let default = v.glottis.params.closure_sharpness;
     assert!((default - 0.22).abs() < 1e-12, "{default}");
-    let mut tilt = |b: f64| {
+    let tilt = |b: f64| {
         let mut v = HumanVoice::with_defaults(48000.0);
         v.set_source(&SourcePatch { tension: Some(0.55), brightness: Some(b), ..Default::default() });
         v.set_gate(1.0);

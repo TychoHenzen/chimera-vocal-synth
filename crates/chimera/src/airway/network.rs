@@ -13,9 +13,12 @@
 //!   (V/ρc²)·dp/dt = ΣU_in − ΣU_out − U_wall − dV/dt
 //! Yielding walls: per-node mass–spring–damper per unit area, times wall area (perimeter·Δ).
 //! Radiation: Flanagan parallel R–L load at open ends; output is d/dt of radiated flow.
+//! Boundary-layer losses (viscous per branch, heat conduction per node) grow as sqrt(f): see
+//! `losses`.
 //!
 //! Real time: `step()` and the control-rate setters allocate nothing.
 
+use crate::airway::losses::{self, N_SEC, Sections};
 use crate::math::{PI, Rng, cbrt, exp, js_max, js_min, sqrt};
 use crate::physics::{C_SOUND, MU, NU, RE_CRIT, RHO, RHO_C2, WallParams};
 
@@ -158,6 +161,12 @@ pub struct LinearElements {
     pub fixed: Vec<bool>,
     pub rad_nodes: Vec<usize>,
     pub rad_area: Vec<f64>,
+    /// viscous resistance per branch at `losses::REF_HZ` (not in `r`, which holds only the
+    /// frequency-independent part): the branch's impedance adds r_visc*`losses::factor(w, true)`
+    pub r_visc: Vec<f64>,
+    /// heat-conduction conductance per node at `losses::REF_HZ`: the node's shunt admittance adds
+    /// g_heat*`losses::factor(w, false)`
+    pub g_heat: Vec<f64>,
 }
 
 /// A turbulence noise source request (control rate).
@@ -323,8 +332,13 @@ pub struct AirwayNetwork {
     pub viscous_scale: f64,
     /// multiplier on every yielding wall's damping (1 = as built)
     pub wall_damping_scale: f64,
-    /// reference angular frequency for frequency-independent viscous loss
-    pub viscous_omega: f64,
+    /// boundary-layer section coefficients at this sample rate, and their states: per branch
+    /// (viscous, N_SEC each) and per node (heat, N_SEC each)
+    loss_sec: Sections,
+    visc_s: Vec<f64>,
+    heat_s: [Vec<f64>; N_SEC],
+    /// heat-loss wall factor per node (perimeter factor*2*sqrt(pi)*viscous factor; 0 at fixed nodes)
+    heat_c: Vec<f64>,
     /// scale on turbulence noise gain
     pub noise_scale: f64,
     /// last output sample (radiated pressure derivative)
@@ -420,7 +434,10 @@ impl AirwayNetwork {
             min_node_area: 0.02,
             viscous_scale: 1.0,
             wall_damping_scale: 1.0,
-            viscous_omega: 2.0 * PI * 700.0,
+            loss_sec: Sections::new(1.0 / fs),
+            visc_s: Vec::new(),
+            heat_s: [Vec::new(), Vec::new(), Vec::new()],
+            heat_c: Vec::new(),
             noise_scale: 1.0,
             out: 0.0,
         }
@@ -556,6 +573,9 @@ impl AirwayNetwork {
         self.u = zf(b);
         self.mom = zf(b);
         self.l_prev = zf(b);
+        self.visc_s = zf(b * N_SEC);
+        self.heat_s = [zf(n), zf(n), zf(n)];
+        self.heat_c = (0..n).map(|k| if self.fixed[k] { 0.0 } else { self.wall_perim[k] * self.visc_f[k] }).collect();
         let mut degree = vec![0usize; n];
         for j in 0..b {
             degree[self.b_a[j]] += 1;
@@ -866,7 +886,8 @@ impl AirwayNetwork {
         }
 
         // 3) branches
-        let visc = sqrt((RHO * MU * self.viscous_omega) / 2.0) * self.viscous_scale;
+        let visc = losses::visc_ref() * self.viscous_scale;
+        let sec = self.loss_sec;
         let closed = self.closed_area;
         let half_rho = 0.5 * RHO;
         let enable_energy_safe = self.energy_safe;
@@ -887,6 +908,7 @@ impl AirwayNetwork {
             let (b_a, b_b, b_kind) = (&self.b_a[..nb], &self.b_b[..nb], &self.b_kind[..nb]);
             let (u_arr, mom, l_prev, psrc) = (&mut self.u[..nb], &mut self.mom[..nb], &mut self.l_prev[..nb], &self.psrc[..nb]);
             let branch_area = &mut self.branch_area[..nb];
+            let visc_s = &mut self.visc_s[..nb * N_SEC];
             let port_area = &mut self.port_area[..nb];
             let (port_area_step, port_len, port_half, port_slit, port_extra_r, port_kin, port_kex) = (&self.port_area_step[..nb], &self.port_len[..nb], &self.port_half[..nb], &self.port_slit[..nb], &self.port_extra_r[..nb], &self.port_kin[..nb], &self.port_kex[..nb]);
             for j in 0..nb {
@@ -894,6 +916,8 @@ impl AirwayNetwork {
                 let b = b_b[j];
                 let l: f64;
                 let r: f64;
+                // viscous resistance at REF_HZ; r holds its frequency-independent share
+                let rv: f64;
                 let mut kf: f64;
                 let mut kb: f64;
                 let a_eff: f64;
@@ -907,13 +931,15 @@ impl AirwayNetwork {
                         u_arr[j] = 0.0;
                         mom[j] = 0.0;
                         branch_area[j] = a_eff;
+                        visc_s[j * N_SEC..(j + 1) * N_SEC].fill(0.0);
                         continue;
                     }
                     let ia = inv_a[a];
                     let ib = inv_a[b];
                     l = half_rho * (half_l[a] + half_l[b]);
                     // viscous: R = S·l/A² · sqrt(ρμω/2) with S = perimeter of each half-section
-                    r = 0.5 * visc * (half_r[a] + half_r[b]);
+                    rv = 0.5 * visc * (half_r[a] + half_r[b]);
+                    r = losses::FLAT * rv;
                     // Borda–Carnot: the jet leaving the narrowest point of the upstream node expands into
                     // the downstream node (sub-section minima make short constrictions lossy as they should be)
                     let ima = inv_amin[a];
@@ -943,6 +969,7 @@ impl AirwayNetwork {
                         u_arr[j] = 0.0;
                         mom[j] = 0.0;
                         branch_area[j] = ap;
+                        visc_s[j * N_SEC..(j + 1) * N_SEC].fill(0.0);
                         continue;
                     }
                     let ip = 1.0 / ap;
@@ -953,7 +980,9 @@ impl AirwayNetwork {
                     }
                     l = ll;
                     let w = port_slit[j];
-                    let mut rr = if w > 0.0 { (12.0 * MU * len * w * w) * ip * ip * ip } else { visc * 2.0 * sqrt(PI) * len * sqrt(ap) * ip * ip };
+                    // a slit's laminar (Poiseuille) resistance is the whole viscous loss
+                    rv = if w > 0.0 { 0.0 } else { visc * 2.0 * sqrt(PI) * len * sqrt(ap) * ip * ip };
+                    let mut rr = if w > 0.0 { (12.0 * MU * len * w * w) * ip * ip * ip } else { losses::FLAT * rv };
                     rr += port_extra_r[j];
                     r = rr;
                     // kinetic: entrance (contraction) + exit (jet expansion into the downstream node)
@@ -973,8 +1002,17 @@ impl AirwayNetwork {
                 }
                 let lp = l_prev[j];
                 let m0 = if enable_energy_safe && l < lp { l * u_arr[j] } else { mom[j] };
-                let c = p[a] - p[b] + psrc[j] + m0 * inv_t;
-                let bq = l * inv_t + r;
+                // boundary-layer sections (trapezoid rule): each drops g*(U' - s) in series
+                let vs = &mut visc_s[j * N_SEC..(j + 1) * N_SEC];
+                let mut g_sum = 0.0;
+                let mut g_hist = 0.0;
+                for (s, gain) in vs.iter().zip(sec.gain) {
+                    let g = rv * gain;
+                    g_sum += g;
+                    g_hist += g * s;
+                }
+                let c = p[a] - p[b] + psrc[j] + m0 * inv_t + g_hist;
+                let bq = l * inv_t + r + g_sum;
                 let u = if c >= 0.0 {
                     if kf > 0.0 { (2.0 * c) / (bq + sqrt(bq * bq + 4.0 * kf * c)) } else { c / bq }
                 } else if kb > 0.0 {
@@ -983,6 +1021,9 @@ impl AirwayNetwork {
                     c / bq
                 };
                 u_arr[j] = u;
+                for ((s, d), e) in vs.iter_mut().zip(sec.d).zip(sec.e) {
+                    *s = d * *s + e * u;
+                }
                 mom[j] = l * u;
                 l_prev[j] = l;
                 flow_sum[a] -= u;
@@ -1011,6 +1052,27 @@ impl AirwayNetwork {
             self.wall_u[k] = uw;
             self.flow_sum[k] -= uw;
             wall_rad_sum += uw * self.wall_rad[k];
+        }
+
+        // 4b) heat conduction into the walls: each open node leaks g*(p - s) through every section
+        //     (explicit in p: g*T/C is below 1e-3 at any area the network allows). Branch-free, so
+        //     it vectorises: a closed node gets g = 0 and its states just follow p.
+        {
+            let heat = losses::heat_ref() * self.viscous_scale;
+            let cl = self.closed_area;
+            let [h0, h1, h2] = &mut self.heat_s;
+            let (h0, h1, h2) = (&mut h0[..n], &mut h1[..n], &mut h2[..n]);
+            let (hc, sa, dxs, area, p) = (&self.heat_c[..n], &self.sqrt_a[..n], &self.dx[..n], &self.area[..n], &self.p[..n]);
+            let fs = &mut self.flow_sum[..n];
+            let (g0, g1, g2) = (sec.gain[0] * heat, sec.gain[1] * heat, sec.gain[2] * heat);
+            for k in 0..n {
+                let g = if area[k] < cl { 0.0 } else { hc[k] * sa[k] * dxs[k] };
+                let pk = p[k];
+                fs[k] -= g * (g0 * (pk - h0[k]) + g1 * (pk - h1[k]) + g2 * (pk - h2[k]));
+                h0[k] = sec.d[0] * h0[k] + sec.e[0] * pk;
+                h1[k] = sec.d[1] * h1[k] + sec.e[1] * pk;
+                h2[k] = sec.d[2] * h2[k] + sec.e[2] * pk;
+            }
         }
 
         // 5) nodes (radiation loads handled semi-implicitly)
@@ -1144,11 +1206,12 @@ impl AirwayNetwork {
     pub fn linear_elements(&self) -> LinearElements {
         let n = self.n_nodes;
         let nb = self.n_branches;
-        let visc = sqrt((RHO * MU * self.viscous_omega) / 2.0) * self.viscous_scale;
+        let visc = losses::visc_ref() * self.viscous_scale;
         let a_t = &self.area_target;
         let dx = &self.dx_target;
         let mut l = vec![0.0; nb];
         let mut r = vec![0.0; nb];
+        let mut r_visc = vec![0.0; nb];
         let mut open = vec![false; nb];
         for j in 0..nb {
             let a = self.b_a[j];
@@ -1161,7 +1224,7 @@ impl AirwayNetwork {
                 }
                 open[j] = true;
                 l[j] = 0.5 * RHO * (dx[a] * ia + dx[b] * ib);
-                r[j] = 0.5 * visc * (self.wall_perim[a] * dx[a] * sqrt(a_t[a]) * ia * ia * self.visc_f[a] + self.wall_perim[b] * dx[b] * sqrt(a_t[b]) * ib * ib * self.visc_f[b]);
+                r_visc[j] = 0.5 * visc * (self.wall_perim[a] * dx[a] * sqrt(a_t[a]) * ia * ia * self.visc_f[a] + self.wall_perim[b] * dx[b] * sqrt(a_t[b]) * ib * ib * self.visc_f[b]);
             } else {
                 let ap = self.port_area_target[j];
                 if ap < self.closed_area {
@@ -1172,14 +1235,22 @@ impl AirwayNetwork {
                 let len = self.port_len[j];
                 l[j] = RHO * len * ip + if self.port_half[j] { 0.5 * RHO * (dx[a] * ia + dx[b] * ib) } else { 0.0 };
                 let w = self.port_slit[j];
-                r[j] = (if w > 0.0 { 12.0 * MU * len * w * w * ip * ip * ip } else { visc * 2.0 * sqrt(PI) * len * sqrt(ap) * ip * ip }) + self.port_extra_r[j];
+                r[j] = (if w > 0.0 { 12.0 * MU * len * w * w * ip * ip * ip } else { 0.0 }) + self.port_extra_r[j];
+                if w <= 0.0 {
+                    r_visc[j] = visc * 2.0 * sqrt(PI) * len * sqrt(ap) * ip * ip;
+                }
             }
         }
         let mut c = vec![0.0; n];
         let mut wall_area = vec![0.0; n];
+        let mut g_heat = vec![0.0; n];
+        let heat = losses::heat_ref() * self.viscous_scale;
         for k in 0..n {
             let a = js_max(a_t[k], self.min_node_area);
             c[k] = (a * dx[k]) / RHO_C2;
+            if !self.fixed[k] && a_t[k] >= self.closed_area {
+                g_heat[k] = heat * self.wall_perim[k] * sqrt(a) * dx[k] * self.visc_f[k];
+            }
             wall_area[k] = if self.has_wall[k] { self.wall_perim[k] * sqrt(a) * dx[k] } else { 0.0 };
         }
         LinearElements {
@@ -1199,6 +1270,8 @@ impl AirwayNetwork {
             fixed: self.fixed.clone(),
             rad_nodes: self.rad_nodes.clone(),
             rad_area: self.rad_nodes.iter().map(|&k| js_max(a_t[k], 1e-4)).collect(),
+            r_visc,
+            g_heat,
         }
     }
 
@@ -1218,5 +1291,9 @@ impl AirwayNetwork {
         self.rad_ul.fill(0.0);
         self.rad_l_prev.fill(0.0);
         self.rad_prev_total = 0.0;
+        self.visc_s.fill(0.0);
+        for hs in &mut self.heat_s {
+            hs.fill(0.0);
+        }
     }
 }

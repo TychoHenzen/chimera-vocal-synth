@@ -170,11 +170,35 @@ Results, synth against singer (rms over 200 Hz-10 kHz of the harmonic level diff
 
 Still open:
 
-- Bandwidths. Closed-glottis bandwidths of the high peaks are 11-46 Hz, and the back vowels' F3
-  is 12-15 Hz, against 85-130 Hz for /a/ and /i/. Viscous loss is taken at one frequency
-  (`viscous_omega`, 700 Hz), and nothing models heat conduction. The poles that radiate poorly
-  barely lose energy, so they ring as narrow, tall peaks. That is why the new F4 is too strong.
 - The speech deficit at 1-3 kHz: a source or loss question, not placement.
+- Real tract bandwidths (below).
+
+## Bandwidths: the boundary layer
+
+Closed-glottis bandwidths of the high peaks were 11-46 Hz, and the back vowels' F3 was 12-15 Hz,
+against 85-130 Hz for /a/ and /i/. Viscous loss was one resistance taken at 700 Hz, and nothing
+modelled heat conduction, so the poles that radiate poorly (the rounded vowels' F3-F5, behind a
+small lip opening) barely lost energy and rang as narrow, tall peaks.
+
+Both losses now grow as sqrt(f) (`crates/chimera/src/airway/losses.rs`): viscous drag as a series
+impedance in every branch, heat conduction as a conductance from every wall node to ground
+(Flanagan's values). sqrt(jw) is fitted by a flat part plus three first-order sections
+(corners 203, 1220 and 7801 Hz; 0.8% rms, 2.3% worst over 80 Hz-12 kHz; above that the sections
+saturate near 5x the 700 Hz value, about 18 kHz). The FDTD runs them by the trapezoid rule, the
+frequency solver in continuous time; `tests/airway.rs` holds the two to 5% in bandwidth.
+
+- Male u: F3 12 -> 26 Hz, F4 14 -> 40 Hz; male /a/ F4 25 -> 47 Hz; female /a/ F4 22 -> 53 Hz.
+  The high peaks fall 4-6 dB against F1 and F2. `tests/bandwidths.rs` holds every rounded vowel's
+  2-5.5 kHz peaks above 22 Hz (they were 12-16).
+- The formants fall 0.3-0.5% (the boundary layer's reactance); `f4_placement` still passes.
+- Cost: the human male voice went from 1.00-1.05 to 1.23-1.29 ms per 128-sample block at
+  oversampling 2 (+22%), 0.48 to 0.53-0.55 ms at 1 (+15%).
+- Physics alone does not reach measured bandwidths (about 100 Hz at 3-4 kHz). The rest is likely
+  yielding tissue and a rough, curved tract: not modelled.
+- The creatures share the airway, so they changed too and were re-blessed, not re-tuned: over
+  their loud windows the level moved -3.7 to +2.3 dB on average, and no call changed pitch.
+- The male u keeps a strong narrow peak near 5.4 kHz. It is not the piriform fossa; its source is
+  open.
 
 ## Feeding evolve
 
