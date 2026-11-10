@@ -132,7 +132,8 @@ impl Spec {
         g("vibrato_cents", 0.0, 80.0, VIBRATO_DEFAULT);
         g("time_shift_s", -0.08, 0.08, 0.0);
         g("body_scale", 0.8, 1.0, 0.9);
-        g("body_pharynx", 0.75, 1.0, 0.88);
+        // BODY_FEMALE's pharynx (1.01 since F4 was matched to the VocalSet singers' speech)
+        g("body_pharynx", 0.85, 1.15, crate::anatomy::human::BODY_FEMALE.pharynx);
         g("body_tongue_radius", 1.8, 2.6, 2.2);
         g("body_lip_width", 3.6, 5.0, 4.4);
         g("dyn_start_db", -24.0, 6.0, 0.0);

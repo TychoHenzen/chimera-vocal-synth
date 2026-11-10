@@ -150,12 +150,20 @@ Hillenbrand's.
 
 Results, synth against singer (rms over 200 Hz-10 kHz of the harmonic level difference):
 
-- Men's long tones: m2 13.6 -> 10.8 dB, m5 11.1 -> 9.7, m8 14.7 -> 14.2, m10 13.9 -> 12.7. At
-  3.8-4.2 kHz the synth's excess fell from 11-19 dB to 5-10. Now the synth is 5-19 dB too strong
-  at 3.36 kHz, where its F4 sits.
-- Women's long tones: f1 10.4 -> 9.9, f3 10.5 -> 12.8, f6 8.8 -> 10.1. The synth's F4 now lands
-  on the 8th harmonic of C5 (4.24 kHz), where the sopranos have a dip, and they have 14 dB more at
-  4.76 kHz. With the epilarynx narrowed, the transfer function reaches their 3.6-3.8 kHz peak.
+- Men's long tones: m2 13.6 -> 10.8 dB, m5 11.1 -> 9.7, m8 14.7 -> 14.2, m10 13.9 -> 12.7. Per
+  1/6-octave bin (singer minus synth, mean over the vowels):
+  - 3.0 kHz: the singers' excess fell by 10-12 dB on all four (m2 +26 -> +16, m5 +21 -> +11,
+    m8 +11 -> +1, m10 +20 -> +8).
+  - 3.36 kHz, where the synth's F4 now sits: the synth is 5-19 dB too strong for m2, m8 and m10;
+    m5 still has 6 dB more than the synth.
+  - 3.78 kHz: the synth's excess fell for m2 (-15 -> -9) and m10 (-16 -> -10); m8 is still -16.
+  - 4.24 kHz: m5 and m10 now have 10-15 dB more than the synth; m2 went -16 -> -5.
+- Women's long tones: f1 10.4 -> 9.9, f3 10.5 -> 12.8, f6 8.8 -> 10.1. The synth is now 4-25 dB
+  too strong at 4.24 kHz (the 8th harmonic of C5), where the sopranos have a dip, and they have
+  5-14 dB more at 4.76 kHz. Rendering the same tones with the Ring on (resting epilarynx top
+  0.29 cm2) did not help: f1 10.1, f3 12.5, f6 11.0, and the 4.24 kHz excess stayed (-10, -22,
+  -4). So technique is not the explanation. The female o and u keep a second, narrow resonance
+  at 4.27-4.43 kHz that neither the Ring nor closing the fossae moves; what makes it is open.
 - Speech: the synth's male F4 by LPC fell from 3.75 to 3.27 kHz. Its female F4 frames now
   cluster at 4.0-4.5 kHz. The 7-10 dB deficit at 1.1-2.9 kHz did not move on either body: it is
   not the tract's high resonances.

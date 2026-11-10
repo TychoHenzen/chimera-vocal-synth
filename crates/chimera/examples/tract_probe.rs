@@ -4,7 +4,8 @@
 //! `cargo run --release -q -p chimera --example tract_probe -- [male|female] [variant]`
 //! variants: base, nofossa (piriform fossae closed), epi1 (epilarynx fully narrowed), visc4k
 //! (viscous loss taken at 4 kHz, not 700 Hz), ph<x> (pharynx x times as long), sweep (mean F1-F4
-//! over the vowels for a grid of pharynx lengths and epilarynx settings)
+//! over the vowels for a grid of pharynx lengths and epilarynx settings), ring (what the UI's
+//! Ring setting adds at 2.4-3.6 kHz)
 use chimera::airway::frequency::{find_peaks, transfer_function, Peak};
 use chimera::anatomy::human::{HumanBody, BODY_FEMALE, BODY_MALE, NEUTRAL};
 use chimera::phonetics::planner::vowel_table;
@@ -35,11 +36,30 @@ fn peaks(body: HumanBody, body_name: &str, ipa: &str, variant: &str, epi: Option
     (find_peaks(&freqs, &h.mag, 150.0), air)
 }
 
+/// Mean level (dB) of |U_radiated / U_glottis| between lo and hi Hz, for one epilarynx setting.
+fn band_db(body: HumanBody, body_name: &str, ipa: &str, epi: f64, lo: f64, hi: f64) -> f64 {
+    let freqs: Vec<f64> = (0..240).map(|i| lo + (hi - lo) * i as f64 / 239.0).collect();
+    let mut air = HumanAirway::new(96000.0, body);
+    let mut a = vowel_table()[body_name][ipa].artic.apply_to(&NEUTRAL);
+    a.epilarynx = epi;
+    air.apply(&a, 0.0);
+    let el = air.net.linear_elements();
+    let h = transfer_function(&el, air.pharynx.first_node(), &freqs, &[air.glottis_port]);
+    let p: f64 = h.mag.iter().map(|m| m * m).sum::<f64>() / freqs.len() as f64;
+    10.0 * p.log10()
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let body_name = args.first().map(String::as_str).unwrap_or("male");
     let variant = args.get(1).map(String::as_str).unwrap_or("base");
     let mut body = if body_name == "female" { BODY_FEMALE } else { BODY_MALE };
+    if variant == "ring" {
+        // the UI's Ring button (epilarynx 0.85) against rest, energy in 2.4-3.6 kHz
+        let s: Vec<String> = VOWELS.iter().map(|v| format!("{v} {:+.1}", band_db(body, body_name, v, 0.85, 2400.0, 3600.0) - band_db(body, body_name, v, 0.0, 2400.0, 3600.0))).collect();
+        println!("ring 0.85 vs rest, 2.4-3.6 kHz (dB): {}", s.join("  "));
+        return;
+    }
     if variant == "sweep" {
         // F4 is the 4th peak; "top" is the strongest peak between 2.5 and 5.5 kHz
         println!("pharynx  epi    F1    F2    F3    F4   top(2.5-5.5k)");

@@ -682,9 +682,9 @@ impl HumanVocalTract {
         t
     }
 
-    /// Template point → body coordinates. The oral region (x > 0.5) is compressed by 0.86 so the
-    /// template's landmarks give a ≈17.5 cm neutral tract; the pharynx (y < 7) is shortened by the
-    /// body's pharynx factor; everything is scaled by the body size.
+    /// Template point -> body coordinates. The oral region (x > 0.5) is compressed by 0.86; the
+    /// pharynx (y < 7) is stretched by the body's pharynx factor (1.15 for the adult male, whose
+    /// tract is then 17.0 cm on /a/); everything is scaled by the body size.
     #[inline]
     pub fn p(&self, x: f64, y: f64) -> Vec2 {
         let k = self.k;

@@ -10,7 +10,9 @@ import { EncoderPages } from "./Encoder.tsx";
 import { noteName } from "./VoiceControls.tsx";
 import type { InfoFn } from "./AnatomyView.tsx";
 
-/** epilarynx narrowing for the singer's ring (measured: +3 to +12 dB at 2.4–3.6 kHz, adult male) */
+/** epilarynx narrowing for the singer's ring. Since the resting epilarynx narrowed (0.8 cm2), it
+ * mostly lowers F4 (adult male about 3.25 -> 3.0 kHz) and changes the 2.4-3.6 kHz level by only
+ * -1.6 to +1.8 dB (`tract_probe -- male ring`) */
 const RING = 0.85;
 
 /** the syllable being sung now: the demo's, or the one the held key is singing */
@@ -98,7 +100,7 @@ function SongControls() {
             { label: "Vibrato", value: vibrato, min: 0, max: 80, onChange: (v) => setVibrato(Math.round(v)), format: (v) => ({ value: String(Math.round(v)), unit: "cents" }) },
             { label: "Rate", value: source.vibratoRate, min: 3.5, max: 7.5, onChange: (v) => setSource({ vibratoRate: v }), format: (v) => ({ value: v.toFixed(1), unit: "Hz" }) },
             { label: "Breathy", value: source.breathiness, min: 0, max: 1, onChange: (v) => setSource({ breathiness: v }), format: (v) => ({ value: String(Math.round(v * 100)), unit: "%" }) },
-            // the singer's ring narrows the tube just above the folds, adding the bright band near 3 kHz
+            // the singer's ring narrows the tube just above the folds, pulling F4 down toward 3 kHz
             { label: "Ring", value: epilarynx, min: 0, max: 1, onChange: (v) => setArtic({ epilarynx: v }), format: (v) => ({ value: String(Math.round(v * 100)), unit: "%" }) },
           ],
         },
