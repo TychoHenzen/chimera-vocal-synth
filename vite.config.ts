@@ -3,11 +3,12 @@ import react from "@vitejs/plugin-react";
 import fs from "node:fs";
 import path from "node:path";
 import type { Plugin } from "vite";
-import { vocalsetToCsd } from "./tools/vocalset-notes.ts";
+import { lyricsOf, vocalsetToCsd } from "./tools/vocalset-notes.ts";
 
 /**
  * Dev/preview only: hands the recordings in voiceRef/ (not committed) to the Evolve page: the CSD
- * songs, and the VocalSet Italian and Latin excerpts, their segment tables turned into CSD notes.
+ * songs, and the VocalSet excerpts (Italian, Latin, and the English Row your boat), their segment
+ * tables turned into CSD notes.
  */
 function voiceRef(): Plugin {
   const root = path.resolve(import.meta.dirname, "voiceRef");
@@ -21,8 +22,7 @@ function voiceRef(): Plugin {
     if (!fs.existsSync(index)) return out;
     const { entries } = JSON.parse(fs.readFileSync(index, "utf8")) as { entries: { key: string; wav: string; context: string; annotation: string | null }[] };
     for (const e of entries) {
-      // the lyrics are spelled as Italian: Caro mio ben and Dona nobis pacem, not Row your boat
-      if (e.context !== "excerpts" || !e.annotation || e.key.includes("_row_")) continue;
+      if (e.context !== "excerpts" || !e.annotation) continue;
       // the "raw" tables have no lyrics; the "extended" ones beside them do
       const csv = path.join(root, e.annotation.replace("raw 1/csv/", "extended 1/without file header/"));
       const wav = path.join(root, "FULL", e.wav);
@@ -71,7 +71,7 @@ function voiceRef(): Plugin {
       if (!e) return notFound();
       if (v[2] === "csv") {
         res.setHeader("content-type", "text/csv");
-        return void res.end(vocalsetToCsd(fs.readFileSync(e.csv, "utf8")));
+        return void res.end(vocalsetToCsd(fs.readFileSync(e.csv, "utf8"), lyricsOf(v[1])));
       }
       res.setHeader("content-type", "audio/wav");
       return void fs.createReadStream(e.wav).pipe(res);

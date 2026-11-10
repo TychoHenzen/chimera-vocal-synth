@@ -10,7 +10,7 @@
 //! change and the loudness contour. The optimiser is a separable CMA-ES (one variance per gene).
 
 use crate::analysis::fft::{Fft, hann};
-use crate::anatomy::human::{ArticKey, HumanBody};
+use crate::anatomy::human::{ArticKey, BodyName, HumanBody};
 use crate::csd::Note;
 use crate::math::{js_round, midi_to_hz};
 use crate::phonetics::Segment;
@@ -61,6 +61,8 @@ pub struct Gene {
 pub struct Spec {
     pub genes: Vec<Gene>,
     pub n_notes: usize,
+    /// the singer's body: the body genes centre on it and the songs are planned for it
+    pub body: BodyName,
 }
 
 const G_CHINK: usize = 0;
@@ -111,7 +113,8 @@ const PER_NOTE: usize = 5;
 const TREM_ONSET: f64 = 0.3;
 
 impl Spec {
-    pub fn new(n_notes: usize) -> Spec {
+    pub fn new(n_notes: usize, body: BodyName) -> Spec {
+        let b = body.body();
         let mut genes = Vec::new();
         let mut g = |name: &str, lo: f64, hi: f64, def: f64| {
             genes.push(Gene { name: name.into(), lo, hi, def });
@@ -131,11 +134,12 @@ impl Spec {
         g("tension", 0.2, 0.9, 0.55);
         g("vibrato_cents", 0.0, 80.0, VIBRATO_DEFAULT);
         g("time_shift_s", -0.08, 0.08, 0.0);
-        g("body_scale", 0.8, 1.0, 0.9);
-        // BODY_FEMALE's pharynx (1.01 since F4 was matched to the VocalSet singers' speech)
-        g("body_pharynx", 0.85, 1.15, crate::anatomy::human::BODY_FEMALE.pharynx);
-        g("body_tongue_radius", 1.8, 2.6, 2.2);
-        g("body_lip_width", 3.6, 5.0, 4.4);
+        // each body gene starts at the singer's body (BODY_FEMALE's pharynx is 1.01 since F4 was
+        // matched to the VocalSet singers' speech) with the same reach either way
+        g("body_scale", b.scale - 0.1, b.scale + 0.1, b.scale);
+        g("body_pharynx", b.pharynx - 0.16, b.pharynx + 0.14, b.pharynx);
+        g("body_tongue_radius", b.tongue_radius - 0.4, b.tongue_radius + 0.4, b.tongue_radius);
+        g("body_lip_width", b.lip_width - 0.8, b.lip_width + 0.6, b.lip_width);
         g("dyn_start_db", -24.0, 6.0, 0.0);
         g("dyn_mid_db", -12.0, 12.0, 0.0);
         g("dyn_end_db", -24.0, 6.0, 0.0);
@@ -164,7 +168,7 @@ impl Spec {
             g(&format!("n{i}_vowel"), 0.0, 1.0, 0.25);
             g(&format!("n{i}_level_db"), -15.0, 15.0, 0.0);
         }
-        Spec { genes, n_notes }
+        Spec { genes, n_notes, body }
     }
 
     /// How many genes come before the per-note ones: the voice, which carries over to any song.
@@ -222,7 +226,11 @@ pub fn f0_contour(x: &[f64], rate: f64, notes: &[Note]) -> Vec<f64> {
     if x.len() < 2 * n || hop == 0 {
         return Vec::new();
     }
-    let opts = crate::analysis::pitch::YinOpts { min_f0: Some(120.0), max_f0: Some(1200.0), threshold: Some(0.2) };
+    // the search floor sits a fourth-plus below the lowest note, so a male singer's vibrato and
+    // scoops stay inside it (a fixed 120 Hz floor clipped the bottom of C3)
+    let lowest = notes.iter().map(|nt| midi_to_hz(nt.midi)).fold(f64::INFINITY, f64::min);
+    let min_f0 = if lowest.is_finite() { (0.75 * lowest).max(50.0) } else { 120.0 };
+    let opts = crate::analysis::pitch::YinOpts { min_f0: Some(min_f0), max_f0: Some(1200.0), threshold: Some(0.2) };
     let frames = (x.len() - n) / hop;
     let mut raw = vec![0.0f64; frames + 3];
     for j in 0..frames {
@@ -276,7 +284,7 @@ pub fn f0_contour(x: &[f64], rate: f64, notes: &[Note]) -> Vec<f64> {
 
 /// Sing `notes` (on the clip's own timeline) with the decoded values `v`. A non-empty `f0`
 /// (see `f0_contour`) is followed instead of the notes' pitch.
-fn render(notes: &[Note], v: &[f64], seconds: f64, f0: &[f64]) -> Vec<f32> {
+fn render(notes: &[Note], v: &[f64], seconds: f64, f0: &[f64], singer: BodyName) -> Vec<f32> {
     let body = HumanBody {
         name: "evolved",
         scale: v[G_SCALE],
@@ -354,7 +362,7 @@ fn render(notes: &[Note], v: &[f64], seconds: f64, f0: &[f64]) -> Vec<f32> {
             .collect();
         let mut plan = plan_song(
             &sung,
-            &SongOptions { body: "female".into(), bpm: 60.0, t0: (ns[i].start + v[G_TIME]).max(0.0), vibrato: if f0.is_empty() { v[G_VIBRATO] } else { 0.0 } },
+            &SongOptions { body: singer.into(), bpm: 60.0, t0: (ns[i].start + v[G_TIME]).max(0.0), vibrato: if f0.is_empty() { v[G_VIBRATO] } else { 0.0 } },
         );
         for g in plan.gestures.iter_mut() {
             if g.strength >= 0.999 && g.label.is_some_and(|l| is_vowel_label(l.as_str())) {
@@ -607,7 +615,7 @@ pub struct Problem {
 impl Problem {
     /// Notes `first..=last` of `all`, against the recording `wav` (mono, `rate` Hz) whose first
     /// sample is at `wav_t0` seconds into the song (0 for the whole recording).
-    pub fn new(all: &[Note], first: usize, last: usize, wav: &[f64], rate: f64, wav_t0: f64) -> Result<Problem, String> {
+    pub fn new(all: &[Note], first: usize, last: usize, wav: &[f64], rate: f64, wav_t0: f64, body: BodyName) -> Result<Problem, String> {
         if all.is_empty() || last >= all.len() || first > last {
             return Err(format!("{} notes; notes {first}-{last} is out of range", all.len()));
         }
@@ -637,7 +645,7 @@ impl Problem {
         let ref_fine = fine.log_mel(&reference);
         let peak = |m: &[f64]| m.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let (floor_coarse, floor_fine) = (peak(&ref_coarse) - FLOOR_DB, peak(&ref_fine) - FLOOR_DB);
-        let spec = Spec::new(notes.len());
+        let spec = Spec::new(notes.len(), body);
         // `cut` resamples to the engine rate, so that is the reference's rate here
         let f0_track = f0_contour(&reference, FS, &notes);
         Ok(Problem { spec, notes, seconds, clip0, reference, f0_track, coarse, fine, ref_coarse, ref_fine, floor_coarse, floor_fine })
@@ -648,7 +656,7 @@ impl Problem {
     }
 
     pub fn render(&self, x: &[f64]) -> Vec<f32> {
-        render(&self.notes, &self.spec.decode(x), self.seconds, &self.f0_track)
+        render(&self.notes, &self.spec.decode(x), self.seconds, &self.f0_track, self.spec.body)
     }
 
     pub fn evaluate(&self, x: &[f64]) -> Eval {
@@ -905,13 +913,40 @@ mod tests {
         10.0 * (e + 1e-30).log10()
     }
 
+    /// A male singer's voice starts from the male body, a female singer's from the female one.
+    #[test]
+    fn body_genes_start_at_the_singers_body() {
+        for name in [BodyName::Male, BodyName::Female] {
+            let spec = Spec::new(1, name);
+            let v = spec.decode(&spec.start());
+            let b = name.body();
+            for (got, want) in [(v[G_SCALE], b.scale), (v[G_PHARYNX], b.pharynx), (v[G_TONGUE], b.tongue_radius), (v[G_LIP], b.lip_width)] {
+                assert!((got - want).abs() < 1e-12, "{name:?}: {got} vs {want}");
+            }
+        }
+    }
+
+    /// The contour follows a low male note: a fixed 120 Hz search floor read nothing on B2-C3.
+    #[test]
+    fn pitch_contour_reaches_a_male_singers_low_notes() {
+        let notes = crate::csd::parse("start,end,midi,syl
+0.0,1.0,47,a
+", "probe").unwrap();
+        let hz = 112.0;
+        let x: Vec<f64> = (0..FS as usize).map(|i| (2.0 * std::f64::consts::PI * hz * i as f64 / FS).sin()).collect();
+        let track = f0_contour(&x, FS, &notes);
+        let voiced: Vec<f64> = track.iter().cloned().filter(|&h| h > 0.0).collect();
+        assert!(voiced.len() > track.len() / 2, "{} of {} frames voiced", voiced.len(), track.len());
+        assert!(voiced.iter().all(|h| (h - hz).abs() < 2.0), "{voiced:?}");
+    }
+
     /// The render follows a pitch track: a flat 300 Hz track on a note written at 523 Hz.
     #[test]
     fn follows_the_pitch_track() {
         let notes = crate::csd::parse("start,end,midi,syl\n0.0,1.2,72,a\n", "probe").unwrap();
-        let base: Vec<f64> = Spec::new(1).genes.iter().map(|g| g.def).collect();
+        let base: Vec<f64> = Spec::new(1, BodyName::Female).genes.iter().map(|g| g.def).collect();
         for (hz, track) in [(300.0, vec![300.0; 150]), (523.25, vec![])] {
-            let out = render(&notes, &base, 1.4, &track);
+            let out = render(&notes, &base, 1.4, &track, BodyName::Female);
             let x: Vec<f64> = out[(0.5 * FS) as usize..(0.6 * FS) as usize].iter().map(|&s| s as f64).collect();
             let p = crate::analysis::pitch::yin_pitch(&x, FS, crate::analysis::pitch::YinOpts { min_f0: Some(100.0), max_f0: Some(900.0), threshold: Some(0.3) });
             eprintln!("target {hz} Hz -> measured {:.1} Hz", p.f0);
@@ -919,7 +954,7 @@ mod tests {
         for (gene, val) in [(G_TENSION, 0.25), (G_TENSION, 0.9), (G_PRESSURE, 5.3), (G_PRESSURE, 16.0), (G_SCALE, 0.8), (G_CHINK, 0.38), (G_SMOOTH, 0.5)] {
             let mut v = base.clone();
             v[gene] = val;
-            let out = render(&notes, &v, 1.4, &[300.0; 150]);
+            let out = render(&notes, &v, 1.4, &[300.0; 150], BodyName::Female);
             let x: Vec<f64> = out[(0.5 * FS) as usize..(0.6 * FS) as usize].iter().map(|&s| s as f64).collect();
             let p = crate::analysis::pitch::yin_pitch(&x, FS, crate::analysis::pitch::YinOpts { min_f0: Some(100.0), max_f0: Some(900.0), threshold: Some(0.3) });
             eprintln!("gene {gene} = {val}: measured {:.1} Hz for 300", p.f0);
@@ -931,14 +966,14 @@ mod tests {
     #[ignore]
     fn probe_epilarynx_and_aspiration() {
         let notes = crate::csd::parse("start,end,midi,syl\n0.0,1.2,72,a\n", "probe").unwrap();
-        let spec = Spec::new(1);
+        let spec = Spec::new(1, BodyName::Female);
         let base: Vec<f64> = spec.genes.iter().map(|g| g.def).collect();
         for (epi, asp) in [(0.0, 3500.0), (0.9, 3500.0), (0.0, 7000.0), (0.9, 7000.0)] {
             let mut v = base.clone();
             v[G_ASPIRATION] = 8.0;
             v[G_EPI] = epi;
             v[G_ASP_HZ] = asp;
-            let out = render(&notes, &v, 1.4, &[]);
+            let out = render(&notes, &v, 1.4, &[], BodyName::Female);
             eprintln!(
                 "epi {epi:.1} asp {asp:5.0}: 0.5-1.5k {:.1}  2-3k {:.1}  3-5k {:.1}  5-8k {:.1} dB",
                 band_db(&out, 500.0, 1500.0),

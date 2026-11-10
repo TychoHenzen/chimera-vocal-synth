@@ -9,10 +9,12 @@
  *   notes touch; next to a Rest it belongs to the note. Rest rows stay gaps.
  * - A Sound row with no lyric (a grace note) sings the previous note's vowel: `csd::parse` makes
  *   it a melisma.
- * - The lyrics are spelled as Italian (`italianSyllable`): right for Caro mio ben and the Latin of
- *   Dona nobis pacem, wrong for the English Row your boat excerpts.
+ * - Caro mio ben and the Latin of Dona nobis pacem are spelled as Italian (`italianSyllable`);
+ *   the English Row your boat (keys with `_row_`) is looked up syllable by syllable
+ *   (`englishSyllable`), since its 27 syllables are the same in every table.
  *
  * usage: bun tools/vocalset-notes.ts <segment csv> [out csv]
+ *        (an input file name containing `_row_` is read as English)
  */
 import { readFileSync, writeFileSync } from "node:fs";
 
@@ -38,6 +40,7 @@ function rows(text: string): Row[] {
 
 const VOWEL: Record<string, string> = { a: "aa", e: "ee", i: "ii", o: "o", u: "uu" };
 const SUNG = new Set(Object.values(VOWEL));
+const ENGLISH_VOWELS = new Set(["ou", "oo", "ii", "e", "au", "eo", "i", "ai", "ao", "er", "a", "ae", "ei", "oi", "u", "uu"]);
 const isVowel = (ch: string | undefined) => ch !== undefined && ch in VOWEL;
 const front = (ch: string | undefined) => ch === "e" || ch === "i";
 
@@ -123,8 +126,45 @@ export function italianSyllable(text: string): string[] {
   return out;
 }
 
+/**
+ * Row your boat's syllables, as the tables split them, in CSD's (American English) phonemes.
+ * ASSUMPTION: "your" rhymes with "or" and "merrily" is mer.ri.ly with the r closing "mer" (General American).
+ */
+const ROW_YOUR_BOAT: Record<string, string> = {
+  row: "r_ou",
+  your: "y_oo_r",
+  boat: "b_ou_t",
+  gent: "j_e_n_t",
+  ly: "l_ii",
+  down: "d_au_n",
+  the: "dh_eo",
+  stream: "s_t_r_ii_m",
+  mer: "m_e_r",
+  ri: "r_i",
+  life: "l_ai_f",
+  is: "i_z",
+  but: "b_ao_t",
+  a: "eo",
+  dream: "d_r_ii_m",
+};
+
+/** One syllable of Row your boat; any other English throws (there is no general speller). */
+export function englishSyllable(text: string): string[] {
+  const w = text.toLowerCase().replace(/[^a-z]/g, "");
+  const p = ROW_YOUR_BOAT[w];
+  if (!p) throw new Error(`no English spelling for "${text}" (only Row your boat's syllables are known)`);
+  return p.split("_");
+}
+
+export type Lyrics = "italian" | "english";
+
+/** The language of a VocalSet excerpt, from its key or file name. */
+export const lyricsOf = (key: string): Lyrics => (key.includes("_row_") ? "english" : "italian");
+
 /** The CSD notes file for a VocalSet segment table. */
-export function vocalsetToCsd(text: string): string {
+export function vocalsetToCsd(text: string, lyrics: Lyrics = "italian"): string {
+  const spell = lyrics === "english" ? englishSyllable : italianSyllable;
+  const sung = (p: string) => SUNG.has(p) || ENGLISH_VOWELS.has(p);
   const rs = rows(text);
   const notes: { start: number; end: number; midi: number; syl: string }[] = [];
   let lastVowel = "aa";
@@ -137,8 +177,8 @@ export function vocalsetToCsd(text: string): string {
     const next = rs[k + 1];
     if (prev?.type === "Transition") start = rs[k - 2]?.type === "Sound" ? (prev.start + prev.end) / 2 : prev.start;
     if (next?.type === "Transition") end = rs[k + 2]?.type === "Sound" ? (next.start + next.end) / 2 : next.end;
-    const phones = r.lyric ? italianSyllable(r.lyric) : [];
-    const vowels = phones.filter((p) => SUNG.has(p));
+    const phones = r.lyric ? spell(r.lyric) : [];
+    const vowels = phones.filter(sung);
     const syl = phones.length && vowels.length ? phones.join("_") : lastVowel;
     if (vowels.length) lastVowel = vowels[vowels.length - 1];
     notes.push({ start, end, midi: r.midi, syl });
@@ -153,7 +193,7 @@ if (import.meta.main) {
     console.error("usage: bun tools/vocalset-notes.ts <segment csv> [out csv]");
     process.exit(2);
   }
-  const csv = vocalsetToCsd(readFileSync(inp, "utf8"));
+  const csv = vocalsetToCsd(readFileSync(inp, "utf8"), lyricsOf(inp));
   if (outp) writeFileSync(outp, csv);
   else process.stdout.write(csv);
 }

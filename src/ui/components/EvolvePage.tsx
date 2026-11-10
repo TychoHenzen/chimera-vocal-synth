@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { call } from "../../wasm/chimera.ts";
-import { EvolveRunner, cutClip, sweepWindows, type CsdNote, type Gene, type SavedRun } from "../../evolve/runner.ts";
+import { EvolveRunner, cutClip, singerOf, sweepWindows, type CsdNote, type Gene, type SavedRun, type SingerBody } from "../../evolve/runner.ts";
 import { INK, drawGenes, drawNotes, drawSeries, drawSpectro, type NoteLook } from "../../evolve/charts.ts";
 import { Screen } from "./Screen.tsx";
 
@@ -161,6 +161,7 @@ export function EvolvePage() {
   const [pendingCsv, setPendingCsv] = useState<{ name: string; text: string } | null>(null);
   const [resume, setResume] = useState<SavedRun | null>(null);
   const [mode, setMode] = useState<"range" | "sweep">("sweep");
+  const [body, setBody] = useState<SingerBody>(() => singerOf(loadedSong?.label ?? ""));
   const [winSize, setWinSize] = useState(6);
   const [overlap, setOverlap] = useState(2);
   const [gens, setGens] = useState(30);
@@ -183,6 +184,7 @@ export function EvolvePage() {
   const install = (s: Loaded) => {
     loadedSong = s;
     setSong(s);
+    setBody(singerOf(s.label));
     const n = s.notes.findIndex((x) => x.syl.phraseEnd);
     setFirst(0);
     setLast(n >= 0 ? n : s.notes.length - 1);
@@ -223,11 +225,12 @@ export function EvolvePage() {
   const start = (withResume: boolean) => {
     if (!song || !clip) return;
     if (mode === "sweep") {
-      void runner.startSweep({ notes: song.notes, samples: song.samples, rate: song.rate, window: winSize, overlap, gens, pop, sigma, seed, workers, label: song.label });
+      void runner.startSweep({ notes: song.notes, body, samples: song.samples, rate: song.rate, window: winSize, overlap, gens, pop, sigma, seed, workers, label: song.label });
       return;
     }
     void runner.start({
       notes: song.notes,
+      body: withResume && resume ? (resume.body ?? "female") : body,
       first,
       last,
       wav: clip.wav,
@@ -354,6 +357,13 @@ export function EvolvePage() {
                     <option value="range">One range of notes</option>
                   </select>
                 </label>
+                <label>
+                  Body
+                  <select value={body} disabled={runner.running} onChange={(e) => setBody(e.target.value as SingerBody)}>
+                    <option value="female">Female</option>
+                    <option value="male">Male</option>
+                  </select>
+                </label>
                 {mode === "sweep" && (
                   <>
                     <label>
@@ -441,6 +451,7 @@ export function EvolvePage() {
                         const r = JSON.parse(await f.text()) as SavedRun;
                         if (r.version !== 1) throw new Error("not a saved run");
                         setResume(r);
+                        setBody(r.body ?? "female");
                         setFirst(r.first);
                         setLast(r.last);
                         setMsg("");

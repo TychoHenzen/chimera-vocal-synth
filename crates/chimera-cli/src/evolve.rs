@@ -127,7 +127,8 @@ fn load_problem(p: &Phrase) -> Result<Problem, String> {
     let base = repo_path(BASE);
     let all = load_notes(&format!("{base}/csv/{}.csv", p.song))?;
     let (wav, rate) = read_wav(&format!("{base}/wav/{}.wav", p.song))?;
-    let mut prob = Problem::new(&all, p.first, p.last, &wav, rate, 0.0)?;
+    // CSD's songs are all sung by one woman
+    let mut prob = Problem::new(&all, p.first, p.last, &wav, rate, 0.0, chimera::anatomy::human::BodyName::Female)?;
     // A/B switch: CHIMERA_NO_FOLLOW_PITCH=1 sings the notes' pitch instead of the recording's contour.
     if std::env::var_os("CHIMERA_NO_FOLLOW_PITCH").is_some() {
         prob.f0_track.clear();

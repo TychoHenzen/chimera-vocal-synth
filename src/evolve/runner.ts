@@ -64,8 +64,18 @@ export interface Picture {
   ref: number[];
   vowels: (string | null)[];
 }
+/** Whose body the evolved voice starts from: the body genes centre on it. */
+export type SingerBody = "male" | "female";
+/**
+ * The body a recording's singer most likely has, from its name: VocalSet names its singers m1-m11
+ * and f1-f9 (`m2_row_vibrato`); CSD's one singer, and anything else, is taken as female.
+ */
+export function singerOf(label: string): SingerBody {
+  return /^m\d+_/.test(label) ? "male" : "female";
+}
 export interface RunConfig {
   notes: CsdNote[];
+  body: SingerBody;
   first: number;
   last: number;
   /** 16-bit samples covering the clip, starting `wavT0` s into the song */
@@ -82,6 +92,7 @@ export interface RunConfig {
 }
 export interface SweepConfig {
   notes: CsdNote[];
+  body: SingerBody;
   /** the whole song, mono */
   samples: Float32Array;
   rate: number;
@@ -145,6 +156,8 @@ export interface SavedRun {
   label: string;
   first: number;
   last: number;
+  /** absent in runs saved before the body was chosen: those were female */
+  body?: SingerBody;
   cma: unknown;
   bestX: number[];
   best: Eval;
@@ -219,6 +232,7 @@ export class EvolveRunner {
   private stopping = false;
   private skipping = false;
   private label = "";
+  private body: SingerBody = "female";
   private range: [number, number] = [0, 0];
 
   subscribe(f: () => void): () => void {
@@ -272,6 +286,7 @@ export class EvolveRunner {
       label: this.label,
       first: this.range[0],
       last: this.range[1],
+      body: this.body,
       cma: call("evolveState"),
       bestX: this.bestX,
       best: this.best!,
@@ -288,6 +303,7 @@ export class EvolveRunner {
     this.error = "";
     this.status = "starting the engines";
     this.label = cfg.label;
+    this.body = cfg.body;
     this.range = [cfg.first, cfg.last];
     this.sweep = null;
     this.emit();
@@ -316,6 +332,7 @@ export class EvolveRunner {
     this.skipping = false;
     this.error = "";
     this.label = cfg.label;
+    this.body = cfg.body;
     this.history = [];
     this.picture = this.defaultPicture = null;
     this.status = "starting the engines";
@@ -332,7 +349,7 @@ export class EvolveRunner {
       for (; sw.index < windows.length && !this.stopping && !this.skipping; sw.index++) {
         const [first, last] = windows[sw.index];
         const { wav, wavT0 } = cutClip(cfg.samples, cfg.rate, cfg.notes, first, last);
-        const problem = { notes: cfg.notes, first, last, wav: Array.from(wav), rate: cfg.rate, wavT0 };
+        const problem = { notes: cfg.notes, first, last, wav: Array.from(wav), rate: cfg.rate, wavT0, body: cfg.body };
         const info = call<ProblemInfo>("evolveProblem", problem);
         const ng = info.nGlobal;
         const def = info.genes.map(unit);
@@ -394,7 +411,7 @@ export class EvolveRunner {
     this.status = "singing the whole section";
     this.emit();
     const { wav, wavT0 } = cutClip(cfg.samples, cfg.rate, cfg.notes, 0, last);
-    const problem = { notes: cfg.notes, first: 0, last, wav: Array.from(wav), rate: cfg.rate, wavT0 };
+    const problem = { notes: cfg.notes, first: 0, last, wav: Array.from(wav), rate: cfg.rate, wavT0, body: cfg.body };
     const info = call<ProblemInfo>("evolveProblem", problem);
     const def = info.genes.map(unit);
     const x = sw.voice.length ? sw.voice.slice() : def.slice(0, info.nGlobal);
@@ -416,7 +433,7 @@ export class EvolveRunner {
   }
 
   private async run(cfg: RunConfig): Promise<void> {
-    const problem = { notes: cfg.notes, first: cfg.first, last: cfg.last, wav: Array.from(cfg.wav), rate: cfg.rate, wavT0: cfg.wavT0 };
+    const problem = { notes: cfg.notes, first: cfg.first, last: cfg.last, wav: Array.from(cfg.wav), rate: cfg.rate, wavT0: cfg.wavT0, body: cfg.body };
     // the main thread's engine only holds the optimiser; the workers hold the recording
     const info = call<ProblemInfo>("evolveProblem", problem);
     const resume = cfg.resume;

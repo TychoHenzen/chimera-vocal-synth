@@ -161,7 +161,9 @@ fn dispatch(st: &mut State, req: &Value) -> Res {
             // 16-bit samples keep the JSON small; `wavT0` is where in the song they start
             let wav: Vec<i32> = arg(req, "wav")?;
             let wav: Vec<f64> = wav.into_iter().map(|s| s as f64 / 32768.0).collect();
-            let p = chimera::evolve::Problem::new(&notes, arg(req, "first")?, arg(req, "last")?, &wav, arg(req, "rate")?, arg(req, "wavT0")?)?;
+            // `body`: the singer's ("male" | "female" | "child"); the body genes centre on it
+            let body: chimera::anatomy::human::BodyName = arg(req, "body")?;
+            let p = chimera::evolve::Problem::new(&notes, arg(req, "first")?, arg(req, "last")?, &wav, arg(req, "rate")?, arg(req, "wavT0")?, body)?;
             let out = json!({ "genes": p.spec.genes, "seconds": p.seconds, "clip0": p.clip0, "bands": chimera::evolve::BANDS, "compNames": chimera::evolve::COMP_NAMES, "compWeights": chimera::evolve::COMP_WEIGHTS, "vowelChoices": chimera::evolve::VOWEL_CHOICES, "nGlobal": chimera::evolve::Spec::n_global() });
             st.evo_problem = Some(p);
             st.evo_cma = None;

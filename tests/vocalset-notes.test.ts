@@ -1,10 +1,11 @@
 /**
- * VocalSet excerpts as CSD notes: Italian lyrics in CSD's romanisation, legato notes joined
+ * VocalSet excerpts as CSD notes: Italian lyrics in CSD's romanisation, Row your boat's English
+ * from a syllable table, legato notes joined
  * across their transitions, grace notes as melismas, and the engine reading every symbol.
  */
 import { describe, expect, test } from "bun:test";
 import { initEngine } from "./harness.ts";
-import { italianSyllable, vocalsetToCsd } from "../tools/vocalset-notes.ts";
+import { englishSyllable, italianSyllable, lyricsOf, vocalsetToCsd } from "../tools/vocalset-notes.ts";
 
 await initEngine();
 const { call } = await import("../src/wasm/chimera.ts");
@@ -66,5 +67,26 @@ describe("segment table to notes", () => {
     expect(notes[1].syl.phraseEnd).toBe(true);
     expect(notes[3].syl.melisma).toBe(true);
     expect(notes[5].syl.nucleus.ipa).toBe("e");
+  });
+});
+
+describe("Row your boat", () => {
+  const ROW = ["row", "row", "row", "your", "boat", "gent", "ly", "down", "the", "stream", "mer", "ri", "ly", "life", "is", "but", "a", "dream"];
+  const table = [HEAD, ...ROW.map((w, k) => row(k + 1, k * 0.5, k * 0.5 + 0.5, "Sound", 48 + (k % 7), w))].join("\n");
+
+  test("its keys read as English, everything else as Italian", () => {
+    expect(lyricsOf("m2_row_vibrato")).toBe("english");
+    expect(lyricsOf("f7_caro_vibrato")).toBe("italian");
+  });
+
+  test("every syllable has a spelling and the engine sings each with its vowel", () => {
+    const csv = vocalsetToCsd(table, "english");
+    const notes = call<{ syl: { nucleus: { ipa: string } } }[]>("csdNotes", { text: csv });
+    // escaped: IPA typed through a shell here gets double-encoded
+    expect(notes.map((n) => n.syl.nucleus.ipa)).toEqual(["o\u028a", "o\u028a", "o\u028a", "\u0254", "o\u028a", "\u025b", "i", "a\u028a", "\u0259", "i", "\u025b", "\u026a", "i", "a\u026a", "\u026a", "\u028c", "\u0259", "i"]);
+  });
+
+  test("English it does not know is an error, not a guess", () => {
+    expect(() => englishSyllable("twinkle")).toThrow();
   });
 });

@@ -202,10 +202,11 @@ frequency solver in continuous time; `tests/airway.rs` holds the two to 5% in ba
 
 ## Feeding evolve
 
-Before VocalSet can feed `chimera evolve`, the evolve problem needs:
+The web app's Evolve page loads VocalSet's excerpts through the dev server (`vite.config.ts`
+converts the annotation with `tools/vocalset-notes.ts`): the Italian arias in CSD's
+romanisation, and Row your boat from an English syllable table (General American). The singer's
+body comes from the file name (`m*` male, everything else female, editable on the page); the
+body genes centre on it and the songs are planned for it. The recording's F0 is tracked again by
+`chimera::evolve::f0_contour`, whose search floor follows the lowest note.
 
-- a voice body per singer (male or female size);
-- vowel-only lyrics, taken from the file name;
-- F0 resampled from the 11.61 ms hop, or tracked again.
-
-The CSD loader in `crates/chimera-cli/src/evolve.rs` (`load_problem`, `plan`) is the place.
+`chimera evolve` (the CLI) still trains on CSD only, with the female body.
