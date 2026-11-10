@@ -58,8 +58,7 @@ pub fn transfer_function(el: &LinearElements, inject: usize, freqs: &[f64], cut:
     let mut q = 0;
     while q < order.len() {
         let m = order[q];
-        for e in adj_start[m]..adj_start[m + 1] {
-            let j = adj[e];
+        for &j in &adj[adj_start[m]..adj_start[m + 1]] {
             let k = if el.a[j] == m { el.b[j] } else { el.a[j] };
             if parent[k] != UNVISITED {
                 continue; // visited (a loop would be ignored here)

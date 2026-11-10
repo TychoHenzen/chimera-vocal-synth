@@ -73,8 +73,8 @@ impl Decimator {
         let start = self.pos; // oldest sample
         let b = &self.buf[start..start + n];
         let mut acc = 0.0;
-        for i in 0..n {
-            acc += self.h[n - 1 - i] * b[i];
+        for (&h, &x) in self.h[..n].iter().rev().zip(b) {
+            acc += h * x;
         }
         self.value = acc;
         true

@@ -385,10 +385,13 @@ impl GestureScore {
                 continue;
             }
             let act = activation(g, t);
-            if let Some(gs) = g.speed {
-                if gs != 0.0 && gs > speed && t >= g.t0 - g.ramp_in && t <= g.end() {
-                    speed = gs;
-                }
+            if let Some(gs) = g.speed
+                && gs != 0.0
+                && gs > speed
+                && t >= g.t0 - g.ramp_in
+                && t <= g.end()
+            {
+                speed = gs;
             }
             if act <= 0.0 {
                 continue;
@@ -453,8 +456,8 @@ mod tests {
         for i in 0..80 {
             let time = i as f64 * 0.01;
             s.blend_all(time, &mut out);
-            for k in 0..N_CONTROL {
-                assert_eq!(out[k], s.blend(ControlKey::from_index(k), time), "key {k} at {time}");
+            for (k, &blended) in out.iter().enumerate() {
+                assert_eq!(blended, s.blend(ControlKey::from_index(k), time), "key {k} at {time}");
             }
         }
     }

@@ -153,18 +153,18 @@ pub fn run(ctx: &Ctx, a: &[String]) -> Result<(), String> {
                     .get(k + 1)
                     .is_some_and(|p| NASALS.contains(&p.ipa.as_str()));
             if !nasal_nb {
-                for f in frame_at(s.t0)..=frame_at(s.t1) {
+                for &open in &port[frame_at(s.t0)..=frame_at(s.t1)] {
                     oral_frames += 1;
-                    if port[f] > 0.01 {
+                    if open > 0.01 {
                         leak1 += 1;
                     }
-                    if port[f] > 0.05 {
+                    if open > 0.05 {
                         leak5 += 1;
                     }
-                    if port[f] > 0.15 {
+                    if open > 0.15 {
                         leak15 += 1;
                     }
-                    max_oral_port = js_max(max_oral_port, port[f]);
+                    max_oral_port = js_max(max_oral_port, open);
                 }
             }
             // formants at the midpoint (first target of a diphthong at 30 %)
@@ -232,7 +232,9 @@ pub fn run(ctx: &Ctx, a: &[String]) -> Result<(), String> {
             for j in 0..2048 {
                 e += out[i + j] as f64 * out[i + j] as f64;
             }
-            if !((e / 2048.0).sqrt() < pk * 0.01) {
+            // a NaN frame counts too, so a broken render shows in the spectrum
+            let rms = (e / 2048.0).sqrt();
+            if rms.is_nan() || rms >= pk * 0.01 {
                 let mut re = vec![0.0; 2048];
                 let mut im = vec![0.0; 2048];
                 for j in 0..2048 {

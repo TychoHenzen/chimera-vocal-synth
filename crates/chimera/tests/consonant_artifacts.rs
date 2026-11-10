@@ -102,7 +102,7 @@ fn the_p_of_sharp_does_not_pop() {
         let lungs = v.source.pressure * 980.665;
         println!("{name}: oral pressure peaks at {:.1}x the lungs'", most / lungs);
         let vowel_peak = plan.segments.iter().filter(|s| s.kind == "vowel").map(|s| peak(&out, idx(s.t0), idx(s.t1))).fold(0.0, f64::max);
-        let p = plan.segments.iter().filter(|s| s.ipa == "p").last().unwrap();
+        let p = plan.segments.iter().rfind(|s| s.ipa == "p").unwrap();
         let db = 20.0 * (peak(&out, idx(p.t1 - 0.005), idx(p.t1 + 0.03)) / vowel_peak).log10();
         println!("{name}: the /p/ of sharp releases at {db:+.1} dB re the loudest vowel");
         assert!(most < 2.0 * lungs, "{name}: oral pressure reached {:.1}x the lungs'", most / lungs);

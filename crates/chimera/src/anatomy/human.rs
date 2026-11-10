@@ -966,11 +966,7 @@ impl HumanVocalTract {
                 } else {
                     let back = 2.5 * k;
                     let n_back = ray_polyline(o.x, o.y, -dir.x, -dir.y, inner, 0.0, back, tmp);
-                    let mut tb = back;
-                    for q in 0..n_back {
-                        tb = js_min(tb, tmp[q]);
-                    }
-                    t_in = -tb;
+                    t_in = -tmp[..n_back].iter().fold(back, |tb, &t| js_min(tb, t));
                 }
                 let mut tissue = 0.0;
                 while i < n && cross_t[i] < t_out {
@@ -992,19 +988,16 @@ impl HumanVocalTract {
                 if n_out == 0 {
                     return None;
                 }
-                let mut t_out = f64::INFINITY;
-                for i in 0..n_out {
-                    t_out = js_min(t_out, tmp[i]);
-                }
+                let t_out = tmp[..n_out].iter().fold(f64::INFINITY, |a, &t| js_min(a, t));
                 let mut t_in;
                 if fan {
                     t_in = fan_inner(o, dir, t_out, tmp);
                 } else {
                     let n_in = ray_polyline(o.x, o.y, dir.x, dir.y, inner, 0.0, t_out + 1.5 * k, tmp);
                     t_in = f64::NEG_INFINITY;
-                    for i in 0..n_in {
-                        if tmp[i] > t_in && tmp[i] < t_out + 1.5 * k {
-                            t_in = tmp[i];
+                    for &t in &tmp[..n_in] {
+                        if t > t_in && t < t_out + 1.5 * k {
+                            t_in = t;
                         }
                     }
                     if t_in == f64::NEG_INFINITY {
@@ -1406,26 +1399,19 @@ struct Projection {
 fn project_on(pl: &Polyline, cum: &[f64], px: f64, py: f64) -> Projection {
     let mut best = f64::INFINITY;
     let (mut bs, mut bx, mut by, mut sign, mut bseg) = (0.0, 0.0, 0.0, 1.0, 0usize);
-    for i in 0..pl.xs.len().saturating_sub(1) {
+    for (i, &ci) in cum.iter().enumerate().take(pl.xs.len().saturating_sub(1)) {
         let (ax, ay) = (pl.xs[i], pl.ys[i]);
         let (ex, ey) = (pl.xs[i + 1] - ax, pl.ys[i + 1] - ay);
         let l2 = ex * ex + ey * ey;
         if l2 < 1e-12 {
             continue;
         }
-        let mut t = ((px - ax) * ex + (py - ay) * ey) / l2;
-        t = if t < 0.0 {
-            0.0
-        } else if t > 1.0 {
-            1.0
-        } else {
-            t
-        };
+        let t = (((px - ax) * ex + (py - ay) * ey) / l2).clamp(0.0, 1.0);
         let (qx, qy) = (ax + ex * t, ay + ey * t);
         let d = hypot(px - qx, py - qy);
         if d < best {
             best = d;
-            bs = cum[i] + t * sqrt(l2);
+            bs = ci + t * sqrt(l2);
             bx = qx;
             by = qy;
             let cross = ex * (py - ay) - ey * (px - ax);
@@ -1457,14 +1443,7 @@ fn signed_gap(pl: &Polyline, px: f64, py: f64) -> f64 {
         let (ax, ay, bx, by) = (xs[i], ys[i], xs[i + 1], ys[i + 1]);
         let (ex, ey) = (bx - ax, by - ay);
         let l2 = ex * ex + ey * ey;
-        let mut t = if l2 > 1e-12 { ((px - ax) * ex + (py - ay) * ey) / l2 } else { 0.0 };
-        t = if t < 0.0 {
-            0.0
-        } else if t > 1.0 {
-            1.0
-        } else {
-            t
-        };
+        let t = if l2 > 1e-12 { (((px - ax) * ex + (py - ay) * ey) / l2).clamp(0.0, 1.0) } else { 0.0 };
         let (dx, dy) = (px - ax - ex * t, py - ay - ey * t);
         let d2 = dx * dx + dy * dy;
         if d2 < best {

@@ -33,7 +33,7 @@ impl LipReed {
 
     /// Advance one sample with the pressure difference across the lips; returns the opening area (cm²).
     #[inline]
-    pub fn next(&mut self, dp: f64) -> f64 {
+    pub fn step(&mut self, dp: f64) -> f64 {
         let w = 2.0 * PI * self.f;
         let acc = self.surface_per_mass * dp - 2.0 * self.zeta * w * self.v - w * w * (self.h - self.h0);
         // semi-implicit Euler (stable for w·dt < 1 at the internal rate)
@@ -80,7 +80,7 @@ impl Whistle {
 
     /// drive 0..1 (jet strength), p_local = acoustic pressure at the whistle (dyn/cm²). Returns a pressure source (dyn/cm²).
     #[inline]
-    pub fn next(&mut self, drive: f64, p_local: f64, gain: f64) -> f64 {
+    pub fn step(&mut self, drive: f64, p_local: f64, gain: f64) -> f64 {
         let w = 2.0 * PI * self.f;
         let mu = 0.15 * drive;
         // x'' − μ w (1 − x²) x' + w² x = c·w²·p̂
@@ -149,7 +149,7 @@ impl ClickTrain {
     }
 
     /// Advance one sample; returns the source value (unit-ish).
-    pub fn next(&mut self) -> f64 {
+    pub fn step(&mut self) -> f64 {
         let t = self.t;
         if !self.pending.is_empty() {
             let mut i = self.pending.len();
@@ -231,7 +231,7 @@ impl Bubble {
     }
 
     /// Advance one audio sample (with adaptive sub-stepping for the collapse); returns radiated pressure (arb.).
-    pub fn next(&mut self) -> f64 {
+    pub fn step(&mut self) -> f64 {
         let pinf = if self.t < self.drop_until { self.p0 - self.drop_amount } else { self.p0 };
         let mut r = self.r;
         let mut rd = self.rd;

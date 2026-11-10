@@ -149,16 +149,8 @@ fn spectral_measures(x: &[f64], rate: f64, frames: &[Frame], n: usize) -> (f64, 
 
         // tilt: least-squares line of dB over log2(frequency), 300 Hz - 4 kHz
         let (b0, b1) = ((300.0 / bin_hz) as usize, ((4000.0 / bin_hz) as usize).min(half));
-        let (mut sx, mut sy, mut sxx, mut sxy, mut m) = (0.0, 0.0, 0.0, 0.0, 0.0);
-        for b in b0.max(1)..=b1 {
-            let lx = (b as f64 * bin_hz).log2();
-            sx += lx;
-            sy += db[b];
-            sxx += lx * lx;
-            sxy += lx * db[b];
-            m += 1.0;
-        }
-        let slope = (m * sxy - sx * sy) / (m * sxx - sx * sx).max(1e-12);
+        let lo = b0.max(1);
+        let (slope, _) = line_fit(db[lo..=b1].iter().enumerate().map(|(i, &y)| (((lo + i) as f64 * bin_hz).log2(), y)));
 
         // CPP: cepstrum of the dB spectrum, peak in the pitch range minus a regression line
         let mut cre: Vec<f64> = db.iter().copied().chain(db[1..half].iter().rev().copied()).collect();
@@ -178,18 +170,7 @@ fn spectral_measures(x: &[f64], rate: f64, frames: &[Frame], n: usize) -> (f64, 
             }
         }
         let cdb: Vec<f64> = ceps.iter().map(|c| 20.0 * (c + 1e-12).log10()).collect();
-        let (mut sx, mut sy, mut sxx, mut sxy, mut m) = (0.0, 0.0, 0.0, 0.0, 0.0);
-        for q in q_lo..=q_hi {
-            let qx = q as f64;
-            sx += qx;
-            sy += cdb[q];
-            sxx += qx * qx;
-            sxy += qx * cdb[q];
-            m += 1.0;
-        }
-        let den = (m * sxx - sx * sx).max(1e-12);
-        let a = (m * sxy - sx * sy) / den;
-        let b = (sy - a * sx) / m;
+        let (a, b) = line_fit(cdb[q_lo..=q_hi].iter().enumerate().map(|(i, &y)| ((q_lo + i) as f64, y)));
 
         hnr += h;
         cpp += cdb[qp] - (a * qp as f64 + b);
@@ -202,6 +183,20 @@ fn spectral_measures(x: &[f64], rate: f64, frames: &[Frame], n: usize) -> (f64, 
     }
     let k = k as f64;
     (hnr / k, cpp / k, h12 / k, tilt / k)
+}
+
+/// Least-squares line through (x, y) points: (slope, intercept).
+fn line_fit(points: impl Iterator<Item = (f64, f64)>) -> (f64, f64) {
+    let (mut sx, mut sy, mut sxx, mut sxy, mut m) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for (x, y) in points {
+        sx += x;
+        sy += y;
+        sxx += x * x;
+        sxy += x * y;
+        m += 1.0;
+    }
+    let slope = (m * sxy - sx * sy) / (m * sxx - sx * sx).max(1e-12);
+    (slope, (sy - slope * sx) / m)
 }
 
 /// Mean RAP and APQ3 over runs of cycles found by following the waveform peaks.

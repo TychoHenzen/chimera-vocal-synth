@@ -581,12 +581,12 @@ impl AirwayNetwork {
             degree[self.b_a[j]] += 1;
             degree[self.b_b[j]] += 1;
         }
-        for k in 0..n {
-            self.is_junction[k] = degree[k] >= 3;
+        for (junction, &d) in self.is_junction.iter_mut().zip(&degree) {
+            *junction = d >= 3;
         }
         self.nbr_start = vec![0; n + 1];
-        for k in 0..n {
-            self.nbr_start[k + 1] = self.nbr_start[k] + degree[k];
+        for (k, &d) in degree.iter().enumerate() {
+            self.nbr_start[k + 1] = self.nbr_start[k] + d;
         }
         self.nbr_list = vec![0; self.nbr_start[n]];
         let mut fill_n: Vec<usize> = self.nbr_start[..n].to_vec();

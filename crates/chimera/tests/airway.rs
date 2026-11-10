@@ -27,12 +27,10 @@ fn fdtd_peaks(net: &mut AirwayNetwork, inject: usize, seconds: f64) -> Vec<Peak>
     let mut re = vec![0.0; nfft];
     let mut im = vec![0.0; nfft];
     net.begin_block(1);
-    for i in 0..n {
-        if i == 0 {
-            net.ext_flow[inject] = net.fs; // unit volume impulse
-        }
-        re[i] = net.step();
-        assert!(re[i].is_finite(), "non-finite at {i}");
+    net.ext_flow[inject] = net.fs; // unit volume impulse; step() clears it after the first sample
+    for (i, r) in re[..n].iter_mut().enumerate() {
+        *r = net.step();
+        assert!(r.is_finite(), "non-finite at {i}");
     }
     Fft::new(nfft).transform(&mut re, &mut im);
     let mut freqs = vec![0.0; nfft / 2];

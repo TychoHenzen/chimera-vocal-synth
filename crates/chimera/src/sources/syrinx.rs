@@ -109,7 +109,7 @@ impl SyrinxLabia {
     }
 
     /// Advance one sample; returns the valve opening 0..1.
-    pub fn next(&mut self) -> f64 {
+    pub fn step(&mut self) -> f64 {
         let tb = self.table;
         let a = ALPHA_RANGE[0] + (ALPHA_RANGE[1] - ALPHA_RANGE[0]) * js_max(0.0, js_min(1.0, self.drive));
         let b = BETA_RANGE[0] + (BETA_RANGE[1] - BETA_RANGE[0]) * js_max(0.0, js_min(1.0, self.tension));

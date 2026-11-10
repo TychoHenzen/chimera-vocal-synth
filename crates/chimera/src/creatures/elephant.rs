@@ -98,7 +98,7 @@ impl CreatureSim for Elephant {
         if mode > 0.02 {
             let p = &self.a.net.p;
             let dp = p[self.nasal.last_node()] - p[self.trunk.first_node()];
-            let open = self.lips.next(dp * mode);
+            let open = self.lips.step(dp * mode);
             self.a.net.set_port_area(self.valve, js_max(open, 4.5 * (1.0 - mode)));
         } else {
             self.a.net.set_port_area(self.valve, 4.5);

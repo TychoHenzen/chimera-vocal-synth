@@ -100,12 +100,7 @@ pub fn klatt_durations(segs: &[Segment], info: impl Fn(&Segment) -> SegInfo) -> 
             *vowels_in_word.entry(word[i]).or_insert(0) += 1;
         }
     }
-    let mut last_vowel: isize = -1;
-    for i in 0..n {
-        if inf[i].vowel {
-            last_vowel = i as isize;
-        }
-    }
+    let last_vowel: isize = inf.iter().rposition(|x| x.vowel).map_or(-1, |i| i as isize);
 
     segs.iter()
         .enumerate()

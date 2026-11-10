@@ -19,7 +19,7 @@ fn a_released_note_never_rises_again() {
     let t = 0.08;
     // activation of each gesture before the release. A release only drops gestures (those of the
     // released tags not yet begun) and keeps the order, so the survivors line up with `was`.
-    let dropped = |g: &chimera::control::score::Gesture| (g.tag == Some(4.0) || g.tag == Some(5.0)) && !(t > g.t0 - g.ramp_in);
+    let dropped = |g: &chimera::control::score::Gesture| (g.tag == Some(4.0) || g.tag == Some(5.0)) && t <= g.t0 - g.ramp_in;
     let was: Vec<f64> = score.gestures().iter().filter(|g| !dropped(g)).map(|g| activation(g, t)).collect();
     score.release(4.0, t);
     score.release(5.0, t);

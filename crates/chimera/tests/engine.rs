@@ -41,8 +41,9 @@ fn session(block: usize) -> Vec<f32> {
     let mut note = Targets::default();
     note.set(ArticKey::TbX, 3.6).set(chimera::control::score::ControlKey::F0, 180.0).set(chimera::control::score::ControlKey::BREATH, 1.0);
     let held = [Gesture::new(0.0, 1e9, 0.03, 0.08, 4.0, note).tag(3.0).label("ɑ")];
+    type Command = Box<dyn Fn(&mut Engine)>;
     // (sample, command)
-    let events: Vec<(usize, Box<dyn Fn(&mut Engine)>)> = vec![
+    let events: Vec<(usize, Command)> = vec![
         (0, Box::new(|e: &mut Engine| e.set_beat_steps(&parse_beat("B t Pf t | B B Pf ^K")))),
         (0, Box::new(|e: &mut Engine| e.set_beat_tempo(Some(120.0), Some(0.15)))),
         (0, Box::new(|e: &mut Engine| e.set_beat_playing(true))),

@@ -38,9 +38,8 @@ impl Fft {
     /// Forward transform (sign -1).
     pub fn transform(&self, re: &mut [f64], im: &mut [f64]) {
         let n = self.n;
-        let rev = &self.rev;
-        for i in 0..n {
-            let j = rev[i] as usize;
+        for (i, &r) in self.rev[..n].iter().enumerate() {
+            let j = r as usize;
             if j > i {
                 re.swap(i, j);
                 im.swap(i, j);

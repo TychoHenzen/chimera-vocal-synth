@@ -309,7 +309,7 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
         } else if def.voicing == Voicing::Voiceless {
             if def.manner == Manner::Stop || def.manner == Manner::Affricate {
                 // aspirated when syllable-initial before a vowel and not after /s/ (English-like)
-                let aspirated = next_vowel && !prev_seg.is_some_and(|p| p.ipa == "s");
+                let aspirated = next_vowel && prev_seg.is_none_or(|p| p.ipa != "s");
                 let vot = if aspirated { 0.05 / rate } else { 0.012 };
                 gestures.push(Gesture::new(t0 + 0.25 * dur, t1 + vot * 0.4, 0.035, if aspirated { 0.045 } else { 0.02 }, 6.0, one(ControlKey::ABDUCTION, if aspirated { 0.36 } else { 0.22 })).label("aspiration"));
             } else {

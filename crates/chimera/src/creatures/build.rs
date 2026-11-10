@@ -56,8 +56,8 @@ pub fn lungs(net: &mut AirwayNetwork, into: usize, area: f64) -> usize {
 
 /// Fill a tube's areas from a function of position u ∈ (0,1).
 pub fn fill_areas(t: Tube, f: impl Fn(f64) -> f64, out: &mut [f64]) -> &[f64] {
-    for i in 0..t.n {
-        out[i] = js_max(0.0, f((i as f64 + 0.5) / t.n as f64));
+    for (i, a) in out[..t.n].iter_mut().enumerate() {
+        *a = js_max(0.0, f((i as f64 + 0.5) / t.n as f64));
     }
     out
 }

@@ -450,7 +450,7 @@ impl HumanVoice {
                 let net = &mut self.airway.net;
                 self.p_lung_now += self.p_lung_step;
                 net.set_fixed_pressure(lungs, self.p_lung_now);
-                let a = self.glottis.next(net.p[sub_node] - net.p[supra]);
+                let a = self.glottis.step(net.p[sub_node] - net.p[supra]);
                 net.set_port_area(gp, a);
                 let y = net.step();
                 if self.dec.push(y) {
@@ -621,7 +621,8 @@ impl HumanVoice {
         let lim = -self.max_penetration * k;
         let mut changed = false;
         let mut fix = |artic: &mut ArticulatorBank, d: f64, n: Vec2, kx: ArticKey, ky: ArticKey| {
-            if !(d < lim) {
+            // not penetrating, or a NaN distance: leave the articulators alone
+            if d.is_nan() || d >= lim {
                 return;
             }
             changed = true;

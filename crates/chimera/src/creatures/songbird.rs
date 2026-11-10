@@ -105,9 +105,9 @@ impl CreatureSim for Songbird {
     }
     #[inline]
     fn sample(&mut self) -> f64 {
-        let a = AMAX * self.lab_l.next();
+        let a = AMAX * self.lab_l.step();
         self.net.set_port_area(self.v_l, a);
-        let a = AMAX * self.lab_r.next();
+        let a = AMAX * self.lab_r.step();
         self.net.set_port_area(self.v_r, a);
         self.net.step()
     }

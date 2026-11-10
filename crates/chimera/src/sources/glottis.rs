@@ -152,7 +152,7 @@ impl ParametricGlottis {
     /// Advance one sample. `dp` is the instantaneous transglottal pressure (p_sub − p_supra).
     /// Returns the glottal area (cm²).
     #[inline]
-    pub fn next(&mut self, dp: f64) -> f64 {
+    pub fn step(&mut self, dp: f64) -> f64 {
         let p = self.params;
         self.dp_sm += self.dp_coef * (dp - self.dp_sm);
 

@@ -257,7 +257,7 @@ fn valves_match_typescript() {
     {
         let fs = 48000.0;
         let mut a = LipReed::new(fs);
-        let g: Vec<f64> = (0..n).map(|i| a.next(2500.0 + 3000.0 * sin((2.0 * PI * 180.0 * i as f64) / fs))).collect();
+        let g: Vec<f64> = (0..n).map(|i| a.step(2500.0 + 3000.0 * sin((2.0 * PI * 180.0 * i as f64) / fs))).collect();
         checks.push(("lipDefault", seq_check("lipDefault", &g, &u["lipDefault"])));
         let mut b = LipReed::new(fs);
         b.f = 470.0;
@@ -270,7 +270,7 @@ fn valves_match_typescript() {
         let g: Vec<f64> = (0..nb)
             .map(|i| {
                 let dp = (if i < nb * 2 / 3 { 400.0 } else { -300.0 }) - 2e3 * y;
-                y = b.next(dp);
+                y = b.step(dp);
                 y
             })
             .collect();
@@ -281,7 +281,7 @@ fn valves_match_typescript() {
         let mut w = Whistle::new(fs);
         w.f = 1800.0;
         let nw = nums(&u["whistle"]).len();
-        let g: Vec<f64> = (0..nw).map(|i| w.next(if i < nw * 11 / 15 { 0.8 } else { 0.01 }, 900.0 * sin((2.0 * PI * 1750.0 * i as f64) / fs), 1.5)).collect();
+        let g: Vec<f64> = (0..nw).map(|i| w.step(if i < nw * 11 / 15 { 0.8 } else { 0.01 }, 900.0 * sin((2.0 * PI * 1750.0 * i as f64) / fs), 1.5)).collect();
         checks.push(("whistle", seq_check("whistle", &g, &u["whistle"])));
     }
     {
@@ -289,7 +289,7 @@ fn valves_match_typescript() {
         c.click(0.001, 1.0);
         c.click(0.0012, 0.5);
         c.click(0.004, -0.8);
-        let g: Vec<f64> = (0..nums(&u["clicksPlain"]).len()).map(|_| c.next()).collect();
+        let g: Vec<f64> = (0..nums(&u["clicksPlain"]).len()).map(|_| c.step()).collect();
         checks.push(("clicksPlain", seq_check("clicksPlain", &g, &u["clicksPlain"])));
         c.ring = 3200.0;
         c.ring_decay = 0.0015;
@@ -297,10 +297,10 @@ fn valves_match_typescript() {
         c.click(0.003, 0.6);
         c.click(0.0031, 0.3);
         let total = nums(&u["clicksRing"]).len();
-        let mut g: Vec<f64> = (0..total - 200).map(|_| c.next()).collect();
+        let mut g: Vec<f64> = (0..total - 200).map(|_| c.step()).collect();
         c.click(0.002, 1.0);
         c.clear();
-        g.extend((0..200).map(|_| c.next()));
+        g.extend((0..200).map(|_| c.step()));
         checks.push(("clicksRing", seq_check("clicksRing", &g, &u["clicksRing"])));
     }
     {
@@ -314,7 +314,7 @@ fn valves_match_typescript() {
             if i == nb * 7 / 12 {
                 b.snap(0.3, 0.002);
             }
-            ys.push(b.next());
+            ys.push(b.step());
             rs.push(b.radius());
         }
         checks.push(("bubble", seq_check("bubble", &ys, &u["bubble"])));
@@ -329,7 +329,7 @@ fn valves_match_typescript() {
                 l.tension = if i < ns / 3 { 0.4 } else { 0.05 };
                 l.f0 = 2500.0 + i as f64;
                 l.gate = if i < ns * 5 / 6 { 1.0 } else { 0.2 };
-                l.next()
+                l.step()
             })
             .collect();
         checks.push(("syrinx", seq_check("syrinx", &g, &u["syrinx"])));

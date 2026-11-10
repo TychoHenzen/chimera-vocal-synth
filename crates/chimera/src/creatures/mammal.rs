@@ -104,6 +104,6 @@ pub fn mammal_noise(a: &mut MammalAirway, glottis: f64, oral: Option<f64>) {
 pub fn step_glottis(a: &mut MammalAirway) {
     let p = &a.net.p;
     let dp = p[a.trachea.last_node()] - p[a.pharynx.first_node()];
-    let area = a.glottis_src.next(dp);
+    let area = a.glottis_src.step(dp);
     a.net.set_port_area(a.glottis, area);
 }

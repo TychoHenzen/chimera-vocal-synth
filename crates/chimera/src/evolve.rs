@@ -850,16 +850,16 @@ impl Cma {
         let n = self.n;
         let mut ymean = vec![0.0; n];
         for (r, &idx) in order.iter().take(self.mu).enumerate() {
-            for i in 0..n {
-                ymean[i] += self.w[r] * ys[idx][i];
+            for (m, &y) in ymean.iter_mut().zip(&ys[idx]) {
+                *m += self.w[r] * y;
             }
         }
-        for i in 0..n {
-            self.mean[i] = (self.mean[i] + self.sigma * self.scale_of(i) * ymean[i]).clamp(0.0, 1.0);
+        for (i, &y) in ymean.iter().enumerate() {
+            self.mean[i] = (self.mean[i] + self.sigma * self.scale_of(i) * y).clamp(0.0, 1.0);
         }
         let k = (self.cs * (2.0 - self.cs) * self.mueff).sqrt();
-        for i in 0..n {
-            self.ps[i] = (1.0 - self.cs) * self.ps[i] + k * ymean[i] / self.c[i].sqrt();
+        for ((p, &y), &c) in self.ps.iter_mut().zip(&ymean).zip(&self.c) {
+            *p = (1.0 - self.cs) * *p + k * y / c.sqrt();
         }
         let psn = self.ps.iter().map(|x| x * x).sum::<f64>().sqrt();
         let decay = (1.0f64 - (1.0f64 - self.cs).powi(2 * (self.generation as i32 + 1))).sqrt();

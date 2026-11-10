@@ -189,7 +189,7 @@ impl Rng {
         Rng { s: if seed == 0 { 1 } else { seed } }
     }
     #[inline]
-    pub fn next(&mut self) -> f64 {
+    pub fn uniform(&mut self) -> f64 {
         self.s = self.s.wrapping_add(0x6d2b_79f5);
         let mut t = self.s;
         t = (t ^ (t >> 15)).wrapping_mul(t | 1);
@@ -199,15 +199,15 @@ impl Rng {
     /// Uniform in [-1, 1).
     #[inline]
     pub fn bipolar(&mut self) -> f64 {
-        self.next() * 2.0 - 1.0
+        self.uniform() * 2.0 - 1.0
     }
     /// Approximately standard normal (sum of 4 uniforms, scaled). Cheap and bounded.
     #[inline]
     pub fn gauss(&mut self) -> f64 {
-        let a = self.next();
-        let b = self.next();
-        let c = self.next();
-        let d = self.next();
+        let a = self.uniform();
+        let b = self.uniform();
+        let c = self.uniform();
+        let d = self.uniform();
         (a + b + c + d - 2.0) * 1.7320508
     }
 }
@@ -265,9 +265,9 @@ mod tests {
     fn mulberry32_matches_typescript() {
         // first outputs of `new Rng()` and `new Rng(12345)` from the TS engine
         let mut r = Rng::default();
-        let v: Vec<f64> = (0..3).map(|_| r.next()).collect();
+        let v: Vec<f64> = (0..3).map(|_| r.uniform()).collect();
         let mut q = Rng::new(12345);
-        let w: Vec<f64> = (0..3).map(|_| q.next()).collect();
+        let w: Vec<f64> = (0..3).map(|_| q.uniform()).collect();
         println!("{v:?} {w:?}");
         assert!(v.iter().chain(&w).all(|x| (0.0..1.0).contains(x)));
     }

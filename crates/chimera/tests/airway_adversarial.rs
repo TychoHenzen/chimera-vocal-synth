@@ -62,7 +62,7 @@ fn sealed_cavity_compression_follows_the_linearised_adiabatic_law() {
     let block = 64;
     let mut i = 0usize;
     while (i as f64) < steps {
-        if i % block == 0 {
+        if i.is_multiple_of(block) {
             let f = js_min(1.0, (i + block) as f64 / steps);
             net.set_tube_targets(t, &[2.0 * (1.0 - 0.05 * f); 10], None, None);
             net.begin_block(block);
@@ -72,7 +72,7 @@ fn sealed_cavity_compression_follows_the_linearised_adiabatic_law() {
     }
     let mut i = 0usize;
     while (i as f64) < FS * 0.02 {
-        if i % block == 0 {
+        if i.is_multiple_of(block) {
             net.begin_block(block);
         }
         net.step();
@@ -109,7 +109,7 @@ fn steady_flow_through_a_short_constriction_obeys_bernoulli_with_jet_loss() {
         let p = 6.0 * CM_H2O;
         let mut i = 0usize;
         while (i as f64) < FS * 0.25 {
-            if i % 64 == 0 {
+            if i.is_multiple_of(64) {
                 net.begin_block(64);
             }
             net.set_fixed_pressure(lung, p * js_min(1.0, i as f64 / (FS * 0.02)));
@@ -137,11 +137,9 @@ fn formant_bandwidths_agree_between_fdtd_and_the_frequency_domain_model() {
     let nfft = 1 << 17;
     let (mut re, mut im) = (vec![0.0; nfft], vec![0.0; nfft]);
     net.begin_block(1);
-    for i in 0..n {
-        if i == 0 {
-            net.ext_flow[t.first_node()] = FS;
-        }
-        re[i] = net.step();
+    net.ext_flow[t.first_node()] = FS; // step() clears it after the first sample
+    for r in &mut re[..n] {
+        *r = net.step();
     }
     Fft::new(nfft).transform(&mut re, &mut im);
     let (mut freqs, mut mag) = (vec![0.0; nfft / 2], vec![0.0; nfft / 2]);
@@ -180,7 +178,7 @@ fn a_realistic_sliding_closure_with_trapped_pressure_releases_without_spikes() {
     let mut i = 0usize;
     while (i as f64) < total {
         let time = i as f64 / FS;
-        if i % block == 0 {
+        if i.is_multiple_of(block) {
             let tt = (i + block) as f64 / FS;
             let depth = if tt < 0.05 {
                 0.0
@@ -241,7 +239,7 @@ fn fast_but_articulator_limited_closure_gives_bounded_piston_pressure() {
     let mut areas = vec![0.0; n];
     let mut i = 0usize;
     while (i as f64) < FS * 0.1 {
-        if i % 64 == 0 {
+        if i.is_multiple_of(64) {
             let tt = (i + 64) as f64 / FS;
             let depth = js_min(1.2, (1.2 * tt) / 0.008);
             for (k, a) in areas.iter_mut().enumerate() {
