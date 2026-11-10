@@ -97,6 +97,17 @@ function wavBlob(samples: ArrayLike<number>, rate: number): Blob {
   return new Blob([buf.buffer], { type: "audio/wav" });
 }
 
+/** Keep a render: the dev/preview server writes it to out/evolve/; elsewhere the browser downloads it. */
+async function saveWav(name: string, blob: Blob, say: (m: string) => void): Promise<void> {
+  try {
+    const r = await fetch(`/voiceref/save/${name}`, { method: "POST", body: blob });
+    if (r.ok) return say(`saved to ${await r.text()}`);
+  } catch {
+    /* no dev server: download instead */
+  }
+  download(name, blob);
+}
+
 /** A note's syllable in the engine's IPA ("ka", "ɾo"), as the strip labels it. */
 function sylText(n: CsdNote): string {
   const s = n.syl as { onset?: { ipa: string }[]; nucleus?: { ipa: string }; coda?: { ipa: string }[] };
@@ -155,6 +166,8 @@ export function EvolvePage() {
   const [gens, setGens] = useState(30);
   /** song seconds under the playhead while a whole-section clip plays */
   const [playhead, setPlayhead] = useState<number | null>(null);
+  /** where Save wav put the last render */
+  const [saved, setSaved] = useState("");
 
   // songs the dev server can hand over from voiceRef/
   useEffect(() => {
@@ -458,7 +471,7 @@ export function EvolvePage() {
           title="Notes"
           sub={
             full
-              ? `whole section: loss ${full.eval.loss.toFixed(3)} (default voice ${full.defaultEval.loss.toFixed(3)}), level gap ${full.eval.gap.toFixed(1)} dB`
+              ? `whole section: loss ${full.eval.loss.toFixed(3)} (default voice ${full.defaultEval.loss.toFixed(3)}), level gap ${full.eval.gap.toFixed(1)} dB${saved ? `, ${saved}` : ""}`
               : "outline: as written / filled: as evolved (shift, length, cents; brighter is louder) / amber: the window being evolved"
           }
           tools={
@@ -473,7 +486,7 @@ export function EvolvePage() {
                 <button className={`chip${playing === "fulldef" ? " on" : ""}`} onClick={() => listen("fulldef", full.defaultPicture.samples, 48000, full.clip0)}>
                   {playing === "fulldef" ? "Stop" : "Hear the default voice"}
                 </button>
-                <button className="chip" onClick={() => download(`chimera-${song.label}-sweep.wav`, wavBlob(full.picture.samples, 48000))}>
+                <button className="chip" onClick={() => void saveWav(`chimera-${song.label}-sweep.wav`, wavBlob(full.picture.samples, 48000), setSaved)}>
                   Save wav
                 </button>
               </>

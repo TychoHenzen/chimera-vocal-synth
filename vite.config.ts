@@ -30,7 +30,7 @@ function voiceRef(): Plugin {
     }
     return out;
   };
-  const handler = (req: { url?: string }, res: import("node:http").ServerResponse, next: () => void) => {
+  const handler = (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse, next: () => void) => {
     const url = (req.url ?? "").split("?")[0];
     if (!url.startsWith("/voiceref/")) return next();
     if (url === "/voiceref/list") {
@@ -44,6 +44,27 @@ function voiceRef(): Plugin {
       res.statusCode = 404;
       res.end("not found");
     };
+    // a render the page (or an agent driving it) wants kept: written to out/evolve/ (gitignored)
+    const save = /^\/voiceref\/save\/([\w-]+\.wav)$/.exec(url);
+    if (save && req.method === "POST") {
+      const parts: Buffer[] = [];
+      let size = 0;
+      req.on("data", (b: Buffer) => {
+        size += b.length;
+        if (size <= 64 << 20) parts.push(b);
+      });
+      req.on("end", () => {
+        if (size > 64 << 20) {
+          res.statusCode = 413;
+          return void res.end("too large");
+        }
+        const out = path.resolve(import.meta.dirname, "out/evolve");
+        fs.mkdirSync(out, { recursive: true });
+        fs.writeFileSync(path.join(out, save[1]), Buffer.concat(parts));
+        res.end(path.join("out/evolve", save[1]));
+      });
+      return;
+    }
     const v = /^\/voiceref\/vocalset\/([\w-]+)\.(wav|csv)$/.exec(url);
     if (v) {
       const e = vocalset().get(v[1]);
