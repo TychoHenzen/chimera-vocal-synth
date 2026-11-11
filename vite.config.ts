@@ -101,7 +101,14 @@ function voiceRef(): Plugin {
 export default defineConfig({
   plugins: [react(), voiceRef()],
   worker: { format: "es" },
+  // The app has one page. Without this the dependency scan also crawls the mockups in docs/ and
+  // every generated dashboard in out/ as if they were app pages.
+  optimizeDeps: { entries: ["index.html"] },
   build: { target: "es2022", sourcemap: true },
-  server: { host: "127.0.0.1", port: 5317, strictPort: true, allowedHosts: true },
+  // The watcher walks the whole root at startup. On Windows, walking voiceRef/ (~47k recordings),
+  // the cargo target dirs and out/ held the dependency scan back 82 s on every cold start (0.3 s
+  // with them ignored), and the layout lint's 30 s clicks timed out waiting for the page.
+  // None of them holds source.
+  server: { host: "127.0.0.1", port: 5317, strictPort: true, allowedHosts: true, watch: { ignored: ["**/target*/**", "**/voiceRef/**", "**/out/**"] } },
   preview: { host: "127.0.0.1", port: 5318, strictPort: true, allowedHosts: true },
 });

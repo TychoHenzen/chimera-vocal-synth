@@ -26,11 +26,16 @@
  *
  * Usage: bun tools/layout-lint.ts [--url http://...] [--out out/layout] [--only 1440x900] [--mode play|duet]
  * Without --url it starts its own Vite dev server (build the wasm first: bun run wasm).
- * Screenshots of every failing view are saved under --out.
+ * Screenshots of every failing view are saved under --out. If a step times out, the lint names
+ * the size and step it stopped at and saves the page as stalled.png.
  */
-import { chromium } from "playwright-core";
+import { chromium, type Page } from "playwright-core";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
+
+/** Where the lint is, so a timeout says which size and step it hit. A bare Playwright timeout
+ * names only the locator, and the same locator runs at every size. */
+const at: { where: string; page?: Page; out: string } = { where: "starting", out: "out/layout" };
 
 const arg = (name: string) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -257,6 +262,7 @@ function makeDuet(dir: string): void {
 
 async function main() {
   const out = arg("out") ?? "out/layout";
+  at.out = out;
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
   let url = arg("url");
@@ -281,12 +287,14 @@ async function main() {
   let errors = 0, warnings = 0, views = 0;
   for (const { w, h } of viewports) {
     const page = await browser.newPage({ viewport: { width: w, height: h }, deviceScaleFactor: 1 });
+    at.page = page;
     await page.addInitScript(hookCanvasText);
     page.on("pageerror", (e) => {
       console.log(`  pageerror at ${w}x${h}: ${e.message}`);
       errors++;
     });
     const check = async (state: string, wait = 350) => {
+      at.where = `${w}x${h} ${state}`;
       await page.evaluate(() => document.fonts.ready);
       await page.waitForTimeout(wait);
       views++;
@@ -299,7 +307,10 @@ async function main() {
       for (const p of [...errs, ...warns]) console.log(`  ${p.warn ? "warn " : "ERROR"} ${p.kind.padEnd(11)} ${p.detail}`);
       if (errs.length) await page.screenshot({ path: `${out}/${w}x${h}-${state.replace(/[^a-z0-9]+/gi, "-")}.png`, fullPage: true });
     };
-    const mode = (m: string) => page.getByRole("radio", { name: new RegExp(`^${m}$`, "i") }).click();
+    const mode = (m: string) => {
+      at.where = `${w}x${h} switching to ${m}`;
+      return page.getByRole("radio", { name: new RegExp(`^${m}$`, "i") }).click();
+    };
     // every encoder page of the screens on the right (each page has its own labels)
     const pages = async (state: string) => {
       const tabs = page.locator(".right .enc-tab");
@@ -365,4 +376,9 @@ async function main() {
   process.exit(errors ? 1 : 0);
 }
 
-await main();
+await main().catch(async (e: Error) => {
+  console.log(`\nlayout lint stopped at ${at.where}: ${e.message.split("\n")[0]}`);
+  await at.page?.screenshot({ path: `${at.out}/stalled.png`, fullPage: true }).catch(() => {});
+  console.log(`  the page at that moment: ${at.out}/stalled.png`);
+  process.exit(1);
+});
