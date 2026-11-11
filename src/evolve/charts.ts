@@ -1,4 +1,5 @@
 /** Canvas drawing for the Evolve mode: line charts, the gene map and the spectrogram strips. */
+import type { NoteValues } from "./runner.ts";
 import type { GenRecord } from "./types.ts";
 
 export const INK = { blue: "#4fb6f2", amber: "#ffb340", green: "#5be381", red: "#ff5d40", pink: "#ff73cf", white: "#eef6f8", dim: "#3487c4", grid: "#133954" };
@@ -25,14 +26,31 @@ export interface Series {
   pts: [number, number][];
 }
 
-export function drawSeries(c: HTMLCanvasElement, series: Series[], opts: { logY?: boolean; zeroY?: boolean; marks?: number[] } = {}): void {
-  const p = prepare(c);
-  if (!p) return;
-  const { g, w, h } = p;
-  const all = series.flatMap((s) => s.pts).filter((q) => Number.isFinite(q[1]) && (!opts.logY || q[1] > 0));
-  if (!all.length) return;
-  const m = { l: 44, r: 8, t: 8, b: 20 };
-  let x0 = Math.min(...all.map((q) => q[0]));
+interface SeriesOpts {
+  logY?: boolean;
+  zeroY?: boolean;
+  /** x values where a sweep's window changes */
+  marks?: number[];
+}
+
+/** A chart's data range and its mapping to the canvas (margins in CSS pixels). */
+interface Frame {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+  px: (x: number) => number;
+  py: (y: number) => number;
+  /** the y axis's ends as plotted (log for a log axis) */
+  a: number;
+  b: number;
+}
+
+const SERIES_MARGIN = { l: 44, r: 8, t: 8, b: 20 };
+
+function seriesFrame(all: [number, number][], w: number, h: number, opts: SeriesOpts): Frame {
+  const m = SERIES_MARGIN;
+  const x0 = Math.min(...all.map((q) => q[0]));
   let x1 = Math.max(...all.map((q) => q[0]));
   if (x0 === x1) x1 = x0 + 1;
   let y0 = Math.min(...all.map((q) => q[1]));
@@ -46,6 +64,13 @@ export function drawSeries(c: HTMLCanvasElement, series: Series[], opts: { logY?
   const [a, b] = [f(y0), f(y1)];
   const px = (x: number) => m.l + ((x - x0) / (x1 - x0)) * (w - m.l - m.r);
   const py = (y: number) => h - m.b - ((f(y) - a) / (b - a || 1)) * (h - m.t - m.b);
+  return { x0, x1, y0, y1, px, py, a, b };
+}
+
+/** Grid lines with y labels, x labels, and dashed lines at the marks. */
+function drawAxes(g: CanvasRenderingContext2D, w: number, h: number, fr: Frame, opts: SeriesOpts): void {
+  const m = SERIES_MARGIN;
+  const { x0, x1, y0, y1, px, py, a, b } = fr;
   g.font = "11px system-ui, sans-serif";
   g.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
@@ -64,7 +89,6 @@ export function drawSeries(c: HTMLCanvasElement, series: Series[], opts: { logY?
     g.fillStyle = INK.dim;
     g.fillText(String(Math.round(v * 10) / 10), px(v) - 8, h - 5);
   }
-  // a sweep's window changes, at these x values
   for (const x of opts.marks ?? []) {
     if (x < x0 || x > x1) continue;
     g.strokeStyle = INK.dim;
@@ -75,19 +99,32 @@ export function drawSeries(c: HTMLCanvasElement, series: Series[], opts: { logY?
     g.stroke();
     g.setLineDash([]);
   }
-  for (const s of series) {
-    g.strokeStyle = s.color;
-    g.lineWidth = 1.6;
-    g.beginPath();
-    let first = true;
-    for (const q of s.pts) {
-      if (!Number.isFinite(q[1]) || (opts.logY && q[1] <= 0)) continue;
-      if (first) g.moveTo(px(q[0]), py(q[1]));
-      else g.lineTo(px(q[0]), py(q[1]));
-      first = false;
-    }
-    g.stroke();
+}
+
+/** One series as a line, skipping points the axis cannot show. */
+function strokeSeries(g: CanvasRenderingContext2D, s: Series, fr: Frame, logY: boolean): void {
+  g.strokeStyle = s.color;
+  g.lineWidth = 1.6;
+  g.beginPath();
+  let first = true;
+  for (const q of s.pts) {
+    if (!Number.isFinite(q[1]) || (logY && q[1] <= 0)) continue;
+    if (first) g.moveTo(fr.px(q[0]), fr.py(q[1]));
+    else g.lineTo(fr.px(q[0]), fr.py(q[1]));
+    first = false;
   }
+  g.stroke();
+}
+
+export function drawSeries(c: HTMLCanvasElement, series: Series[], opts: SeriesOpts = {}): void {
+  const p = prepare(c);
+  if (!p) return;
+  const { g, w, h } = p;
+  const all = series.flatMap((s) => s.pts).filter((q) => Number.isFinite(q[1]) && (!opts.logY || q[1] > 0));
+  if (!all.length) return;
+  const fr = seriesFrame(all, w, h, opts);
+  drawAxes(g, w, h, fr, opts);
+  for (const s of series) strokeSeries(g, s, fr, !!opts.logY);
 }
 
 /** Every gene of the best genome over the generations: rows are genes, columns generations. */
@@ -118,7 +155,7 @@ export interface NoteLook {
   /** "pending" (no window reached it), "active" (in the window being evolved) or "done" */
   state: "pending" | "active" | "done";
   /** the note's evolved genes, when a window has reached it */
-  genes: { shift: number; dur: number; cents: number; vowel: string | null; level: number } | null;
+  genes: NoteValues | null;
 }
 
 /**
@@ -130,7 +167,39 @@ export function drawNotes(c: HTMLCanvasElement, notes: NoteLook[], win: [number,
   const p = prepare(c);
   if (!p || !notes.length) return;
   const { g, w, h } = p;
-  const m = { l: 8, r: 8, t: 10, b: 34 };
+  const roll = rollOf(notes, w, h);
+  drawKeys(g, roll, w);
+  if (win) drawWindow(g, roll, notes, win, h);
+  g.font = "10px system-ui, sans-serif";
+  g.textAlign = "center";
+  notes.forEach((n, k) => drawNote(g, roll, n, k, h));
+  g.textAlign = "start";
+  if (playhead !== null && playhead >= roll.t0 && playhead <= roll.t1) {
+    g.strokeStyle = INK.pink;
+    g.lineWidth = 1.5;
+    g.beginPath();
+    g.moveTo(roll.px(playhead), ROLL_MARGIN.t);
+    g.lineTo(roll.px(playhead), h - ROLL_MARGIN.b);
+    g.stroke();
+  }
+}
+
+const ROLL_MARGIN = { l: 8, r: 8, t: 10, b: 34 };
+
+/** The piano roll's time and pitch ranges and its mapping to the canvas. */
+interface Roll {
+  t0: number;
+  t1: number;
+  lo: number;
+  hi: number;
+  px: (t: number) => number;
+  py: (midi: number) => number;
+  /** a note bar's height */
+  lane: number;
+}
+
+function rollOf(notes: NoteLook[], w: number, h: number): Roll {
+  const m = ROLL_MARGIN;
   const t0 = notes[0].start - 0.3;
   const t1 = notes[notes.length - 1].end + 0.3;
   const lo = Math.min(...notes.map((n) => n.midi)) - 1.5;
@@ -138,55 +207,55 @@ export function drawNotes(c: HTMLCanvasElement, notes: NoteLook[], win: [number,
   const px = (t: number) => m.l + ((t - t0) / (t1 - t0)) * (w - m.l - m.r);
   const py = (midi: number) => m.t + ((hi - midi) / (hi - lo)) * (h - m.t - m.b);
   const lane = Math.max(3, ((h - m.t - m.b) / (hi - lo)) * 0.8);
-  for (let k = Math.ceil(lo); k <= hi; k++) {
+  return { t0, t1, lo, hi, px, py, lane };
+}
+
+/** A line per semitone, brighter at each C. */
+function drawKeys(g: CanvasRenderingContext2D, roll: Roll, w: number): void {
+  for (let k = Math.ceil(roll.lo); k <= roll.hi; k++) {
     g.strokeStyle = k % 12 === 0 ? INK.dim : INK.grid;
     g.lineWidth = 1;
     g.beginPath();
-    g.moveTo(m.l, py(k));
-    g.lineTo(w - m.r, py(k));
+    g.moveTo(ROLL_MARGIN.l, roll.py(k));
+    g.lineTo(w - ROLL_MARGIN.r, roll.py(k));
     g.stroke();
   }
-  if (win) {
-    const a = px(notes[win[0]].start - 0.4);
-    const b = px(notes[win[1]].end + 0.5);
-    g.fillStyle = "rgba(255, 179, 64, 0.08)";
-    g.fillRect(a, m.t, b - a, h - m.t - m.b);
-    g.strokeStyle = INK.amber;
-    g.strokeRect(a + 0.5, m.t + 0.5, b - a - 1, h - m.t - m.b - 1);
+}
+
+/** The window being evolved, shaded over the clip the engine cuts around its notes. */
+function drawWindow(g: CanvasRenderingContext2D, roll: Roll, notes: NoteLook[], win: [number, number], h: number): void {
+  const m = ROLL_MARGIN;
+  const a = roll.px(notes[win[0]].start - 0.4);
+  const b = roll.px(notes[win[1]].end + 0.5);
+  g.fillStyle = "rgba(255, 179, 64, 0.08)";
+  g.fillRect(a, m.t, b - a, h - m.t - m.b);
+  g.strokeStyle = INK.amber;
+  g.strokeRect(a + 0.5, m.t + 0.5, b - a - 1, h - m.t - m.b - 1);
+}
+
+/** Note k: its written place, where its genes moved it, and its syllable below. */
+function drawNote(g: CanvasRenderingContext2D, roll: Roll, n: NoteLook, k: number, h: number): void {
+  const { px, py, lane } = roll;
+  const y = py(n.midi);
+  g.strokeStyle = n.state === "pending" ? INK.grid : INK.dim;
+  g.lineWidth = 1;
+  g.strokeRect(px(n.start) + 0.5, y - lane / 2, Math.max(1, px(n.end) - px(n.start) - 1), lane);
+  const gn = n.genes;
+  if (gn) {
+    const s = n.start + gn.shift;
+    const e = Math.max(s + 0.05, n.end + gn.shift + gn.dur);
+    const yy = py(n.midi + gn.cents / 100);
+    // level -15..+15 dB as 0.25..1 opacity
+    g.globalAlpha = Math.max(0.25, Math.min(1, 0.625 + gn.level / 40));
+    g.fillStyle = n.state === "active" ? INK.amber : INK.blue;
+    g.fillRect(px(s), yy - lane / 2 + 1, Math.max(1, px(e) - px(s) - 1), lane - 2);
+    g.globalAlpha = 1;
   }
-  g.font = "10px system-ui, sans-serif";
-  g.textAlign = "center";
-  notes.forEach((n, k) => {
-    const y = py(n.midi);
-    g.strokeStyle = n.state === "pending" ? INK.grid : INK.dim;
-    g.lineWidth = 1;
-    g.strokeRect(px(n.start) + 0.5, y - lane / 2, Math.max(1, px(n.end) - px(n.start) - 1), lane);
-    const gn = n.genes;
-    if (gn) {
-      const s = n.start + gn.shift;
-      const e = Math.max(s + 0.05, n.end + gn.shift + gn.dur);
-      const yy = py(n.midi + gn.cents / 100);
-      // level -15..+15 dB as 0.25..1 opacity
-      g.globalAlpha = Math.max(0.25, Math.min(1, 0.625 + gn.level / 40));
-      g.fillStyle = n.state === "active" ? INK.amber : INK.blue;
-      g.fillRect(px(s), yy - lane / 2 + 1, Math.max(1, px(e) - px(s) - 1), lane - 2);
-      g.globalAlpha = 1;
-    }
-    // syllables alternate rows so short notes don't overprint
-    const ty = h - m.b + 13 + (k % 2) * 12;
-    const label = gn?.vowel ? `${n.text}>${gn.vowel}` : n.text;
-    g.fillStyle = n.state === "active" ? INK.amber : n.state === "done" ? INK.white : INK.dim;
-    g.fillText(label, px((n.start + n.end) / 2), ty);
-  });
-  g.textAlign = "start";
-  if (playhead !== null && playhead >= t0 && playhead <= t1) {
-    g.strokeStyle = INK.pink;
-    g.lineWidth = 1.5;
-    g.beginPath();
-    g.moveTo(px(playhead), m.t);
-    g.lineTo(px(playhead), h - m.b);
-    g.stroke();
-  }
+  // syllables alternate rows so short notes don't overprint
+  const ty = h - ROLL_MARGIN.b + 13 + (k % 2) * 12;
+  const label = gn?.vowel ? `${n.text}>${gn.vowel}` : n.text;
+  g.fillStyle = n.state === "active" ? INK.amber : n.state === "done" ? INK.white : INK.dim;
+  g.fillText(label, px((n.start + n.end) / 2), ty);
 }
 
 const colormap = (t: number): [number, number, number] => [
