@@ -1,115 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { call } from "../../wasm/chimera.ts";
+import { useEffect, useMemo, useState } from "react";
 import { EvolveRunner } from "../../evolve/runner.ts";
 import { cutClip, singerOf, sweepWindows } from "../../evolve/sweep.ts";
-import type { CsdNote, Gene, SavedRun, SingerBody } from "../../evolve/types.ts";
-import { INK, drawGenes, drawNotes, drawSeries, drawSpectro, type NoteLook } from "../../evolve/charts.ts";
+import type { CsdNote, SavedRun, SingerBody } from "../../evolve/types.ts";
+import { drawNotes, type NoteLook } from "../../evolve/charts.ts";
+import { download, play, playingAt, saveWav, stopPlaying, wavBlob } from "../../evolve/playback.ts";
+import { Canvas, EvolveCharts, type Listen } from "./EvolveCharts.tsx";
 import { EarPanel, ear } from "./EarPanel.tsx";
 import { Screen } from "./Screen.tsx";
+import { SongPicker, type Loaded } from "./SongPicker.tsx";
 
 /** One runner for the page's life: switching modes does not stop a run. */
 const runner = new EvolveRunner();
 
-interface Loaded {
-  label: string;
-  notes: CsdNote[];
-  samples: Float32Array;
-  rate: number;
-}
 let loadedSong: Loaded | null = null;
 
-async function decodeAudio(buf: ArrayBuffer): Promise<{ samples: Float32Array; rate: number }> {
-  const ctx = new AudioContext({ sampleRate: 48000 });
-  try {
-    const a = await ctx.decodeAudioData(buf.slice(0));
-    const out = new Float32Array(a.length);
-    for (let c = 0; c < a.numberOfChannels; c++) {
-      const ch = a.getChannelData(c);
-      for (let i = 0; i < out.length; i++) out[i] += ch[i] / a.numberOfChannels;
-    }
-    return { samples: out, rate: a.sampleRate };
-  } finally {
-    void ctx.close();
-  }
-}
-
-let player: { ctx: AudioContext; src: AudioBufferSourceNode; at: number } | null = null;
-function stopPlaying(): void {
-  if (!player) return;
-  try {
-    player.src.stop();
-  } catch {
-    /* already ended */
-  }
-  void player.ctx.close();
-  player = null;
-}
-/** Seconds into the clip that is playing, or null. */
-function playingAt(): number | null {
-  return player ? player.ctx.currentTime - player.at : null;
-}
-function play(samples: ArrayLike<number>, rate: number, onEnd: () => void): void {
-  stopPlaying();
-  const ctx = new AudioContext({ sampleRate: rate });
-  const buf = ctx.createBuffer(1, samples.length, rate);
-  const ch = buf.getChannelData(0);
-  let peak = 1e-9;
-  for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]));
-  // levels are kept (volume is part of the score); only scaled down if it would clip
-  const k = Math.min(1, 0.95 / peak);
-  for (let i = 0; i < samples.length; i++) ch[i] = samples[i] * k;
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  src.connect(ctx.destination);
-  src.onended = () => {
-    if (player?.src === src) stopPlaying();
-    onEnd();
-  };
-  src.start();
-  player = { ctx, src, at: ctx.currentTime };
-}
-
-function download(name: string, data: string | Blob): void {
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(typeof data === "string" ? new Blob([data], { type: "application/json" }) : data);
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}
-
-/** 16-bit mono WAV, peak-normalised only if it would clip (as it plays). */
-function wavBlob(samples: ArrayLike<number>, rate: number): Blob {
-  let peak = 1e-9;
-  for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]));
-  const k = Math.min(1, 0.95 / peak);
-  const buf = new DataView(new ArrayBuffer(44 + samples.length * 2));
-  const str = (o: number, t: string) => [...t].forEach((ch, i) => buf.setUint8(o + i, ch.charCodeAt(0)));
-  str(0, "RIFF");
-  buf.setUint32(4, 36 + samples.length * 2, true);
-  str(8, "WAVEfmt ");
-  buf.setUint32(16, 16, true);
-  buf.setUint16(20, 1, true);
-  buf.setUint16(22, 1, true);
-  buf.setUint32(24, rate, true);
-  buf.setUint32(28, rate * 2, true);
-  buf.setUint16(32, 2, true);
-  buf.setUint16(34, 16, true);
-  str(36, "data");
-  buf.setUint32(40, samples.length * 2, true);
-  for (let i = 0; i < samples.length; i++) buf.setInt16(44 + i * 2, Math.max(-32768, Math.min(32767, Math.round(samples[i] * k * 32767))), true);
-  return new Blob([buf.buffer], { type: "audio/wav" });
-}
-
-/** Keep a render: the dev/preview server writes it to out/evolve/; elsewhere the browser downloads it. */
-async function saveWav(name: string, blob: Blob, say: (m: string) => void): Promise<void> {
-  try {
-    const r = await fetch(`/voiceref/save/${name}`, { method: "POST", body: blob });
-    if (r.ok) return say(`saved to ${await r.text()}`);
-  } catch {
-    /* no dev server: download instead */
-  }
-  download(name, blob);
-}
+type Mode = "range" | "sweep" | "ear";
 
 /** A note's syllable in the engine's IPA ("ka", "ɾo"), as the strip labels it. */
 function sylText(n: CsdNote): string {
@@ -136,26 +41,9 @@ function fmtTime(s: number): string {
   return `${m}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 }
 
-function Canvas(props: { draw: (c: HTMLCanvasElement) => void; deps: unknown[]; className?: string }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const c = ref.current;
-    if (!c) return;
-    props.draw(c);
-    const ro = new ResizeObserver(() => props.draw(c));
-    ro.observe(c);
-    return () => ro.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, props.deps);
-  return <canvas ref={ref} className={props.className} />;
-}
-
 export function EvolvePage() {
   const tick = useRunner();
   const [song, setSong] = useState<Loaded | null>(loadedSong);
-  const [available, setAvailable] = useState<string[]>([]);
-  const [pick, setPick] = useState("");
-  const [loading, setLoading] = useState("");
   const [msg, setMsg] = useState("");
   const [first, setFirst] = useState(0);
   const [last, setLast] = useState(0);
@@ -165,12 +53,8 @@ export function EvolvePage() {
   const cores = navigator.hardwareConcurrency || 4;
   const [workers, setWorkers] = useState(Math.max(1, Math.min(16, cores - 1)));
   const [playing, setPlaying] = useState("");
-  const wavFile = useRef<HTMLInputElement>(null);
-  const csvFile = useRef<HTMLInputElement>(null);
-  const [pendingWav, setPendingWav] = useState<{ name: string; buf: ArrayBuffer } | null>(null);
-  const [pendingCsv, setPendingCsv] = useState<{ name: string; text: string } | null>(null);
   const [resume, setResume] = useState<SavedRun | null>(null);
-  const [mode, setMode] = useState<"range" | "sweep" | "ear">("sweep");
+  const [mode, setMode] = useState<Mode>("sweep");
   const [body, setBody] = useState<SingerBody>(() => singerOf(loadedSong?.label ?? ""));
   const [winSize, setWinSize] = useState(6);
   const [overlap, setOverlap] = useState(2);
@@ -181,17 +65,6 @@ export function EvolvePage() {
   /** where Save wav put the last render */
   const [saved, setSaved] = useState("");
 
-  // songs the dev server can hand over from voiceRef/
-  useEffect(() => {
-    fetch("/voiceref/list")
-      .then((r) => (r.ok ? r.json() : { songs: [] }))
-      .then((j: { songs: string[] }) => {
-        setAvailable(j.songs);
-        if (j.songs.length) setPick(j.songs.includes("csd/en042a") ? "csd/en042a" : j.songs[0]);
-      })
-      .catch(() => {});
-  }, []);
-
   const install = (s: Loaded) => {
     loadedSong = s;
     setSong(s);
@@ -200,34 +73,6 @@ export function EvolvePage() {
     setFirst(0);
     setLast(n >= 0 ? n : s.notes.length - 1);
     setMsg("");
-  };
-
-  const loadFromServer = async () => {
-    setLoading(`loading ${pick}`);
-    try {
-      const [csv, wav] = await Promise.all([fetch(`/voiceref/${pick}.csv`).then((r) => r.text()), fetch(`/voiceref/${pick}.wav`).then((r) => r.arrayBuffer())]);
-      const notes = call<CsdNote[]>("csdNotes", { text: csv });
-      const a = await decodeAudio(wav);
-      install({ label: pick.replace(/^\w+\//, ""), notes, ...a });
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading("");
-    }
-  };
-
-  const loadFromFiles = async () => {
-    if (!pendingWav || !pendingCsv) return;
-    setLoading("decoding");
-    try {
-      const notes = call<CsdNote[]>("csdNotes", { text: pendingCsv.text });
-      const a = await decodeAudio(pendingWav.buf);
-      install({ label: pendingWav.name.replace(/\.[^.]+$/, ""), notes, ...a });
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading("");
-    }
   };
 
   const clip = useMemo(() => (song && song.notes[first] && song.notes[last] ? cutClip(song.samples, song.rate, song.notes, first, last) : null), [song, first, last]);
@@ -260,16 +105,19 @@ export function EvolvePage() {
     });
   };
 
+  const loadRun = (r: SavedRun) => {
+    setResume(r);
+    setBody(r.body ?? "female");
+    setFirst(r.first);
+    setLast(r.last);
+    setMsg("");
+  };
+
   /** either optimiser is running: the setup is locked */
   const busy = runner.running || ear.running;
-  const h = runner.history;
-  const info = runner.info;
-  const lastRec = h[h.length - 1];
-  const genes: Gene[] = info?.genes ?? [];
-  const chartGenes = runner.sweep && info ? genes.slice(0, info.nGlobal) : genes;
   const sweep = runner.sweep;
   const full = sweep?.full ?? null;
-  const listen = (id: string, samples: ArrayLike<number> | undefined, rate = 48000, songT0?: number) => {
+  const listen: Listen = (id, samples, rate = 48000, songT0) => {
     if (!samples) return;
     if (playing === id) {
       stopPlaying();
@@ -312,64 +160,18 @@ export function EvolvePage() {
     return song.samples.subarray(a, Math.min(song.samples.length, a + Math.round(runner.info.seconds * song.rate)));
   }, [song, clip, tick]);
 
-  const values = (x: number[]) => x.map((u, i) => genes[i].lo + u * (genes[i].hi - genes[i].lo));
-
   return (
     <div className="evolve">
       <Screen className="ev-setup" title="Recording" sub={song ? `${song.label} / ${song.notes.length} notes` : "choose a song"}>
         <div className="ev-body">
-          {available.length > 0 && (
-            <div className="ev-row">
-              <label>
-                From voiceRef
-                <select value={pick} onChange={(e) => setPick(e.target.value)}>
-                  {available.map((s) => (
-                    <option key={s}>{s}</option>
-                  ))}
-                </select>
-              </label>
-              <button className="primary" disabled={!!loading || busy} onClick={() => void loadFromServer()}>
-                Load
-              </button>
-            </div>
-          )}
-          <div className="ev-row">
-            <label>
-              Recording (wav, mp3, ...)
-              <input
-                ref={wavFile}
-                type="file"
-                accept="audio/*"
-                onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  if (f) setPendingWav({ name: f.name, buf: await f.arrayBuffer() });
-                }}
-              />
-            </label>
-            <label>
-              Notes (CSD csv: start,end,pitch,syllable)
-              <input
-                ref={csvFile}
-                type="file"
-                accept=".csv,text/csv,text/plain"
-                onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  if (f) setPendingCsv({ name: f.name, text: await f.text() });
-                }}
-              />
-            </label>
-            <button disabled={!pendingWav || !pendingCsv || !!loading || busy} onClick={() => void loadFromFiles()}>
-              Use these files
-            </button>
-          </div>
-          {loading && <p className="hint">{loading}...</p>}
+          <SongPicker busy={busy} onLoaded={install} onError={setMsg} />
           {msg && <p className="error">{msg}</p>}
           {song && (
             <>
               <div className="ev-row">
                 <label>
                   Mode
-                  <select value={mode} disabled={busy} onChange={(e) => setMode(e.target.value as "range" | "sweep" | "ear")}>
+                  <select value={mode} disabled={busy} onChange={(e) => setMode(e.target.value as Mode)}>
                     <option value="sweep">Sweep the song, window by window</option>
                     <option value="range">One range of notes</option>
                     <option value="ear">Learn from my ear (A/B questions)</option>
@@ -444,83 +246,20 @@ export function EvolvePage() {
                   <input type="number" value={seed} disabled={busy} onChange={(e) => setSeed(Number(e.target.value))} />
                 </label>
               </div>
-              {mode === "ear" ? (
-              <div className="ev-row">
-                {ear.running ? (
-                  <button className="primary" onClick={() => ear.stop()}>
-                    Stop
-                  </button>
-                ) : (
-                  <button className="primary" disabled={busy} onClick={() => start(false)}>
-                    Start listening
-                  </button>
-                )}
-                <span className="hint">your answers are kept in out/evolve/ear-answers.json and carry over to any clip</span>
-              </div>
-              ) : (
-              <div className="ev-row">
-                {runner.running ? (
-                  <>
-                    <button className="primary" onClick={() => runner.stop()}>
-                      Stop
-                    </button>
-                    {sweep?.phase === "windows" && <button onClick={() => runner.skipToFull()}>Sing the whole section now</button>}
-                  </>
-                ) : (
-                  <>
-                    <button className="primary" onClick={() => start(false)}>
-                      {mode === "sweep" ? "Start a sweep" : "Start a new run"}
-                    </button>
-                    {resume && mode === "range" && (
-                      <button onClick={() => start(true)}>
-                        Continue loaded run ({resume.history.length} generations)
-                      </button>
-                    )}
-                  </>
-                )}
-                <button disabled={!h.length || !!sweep} onClick={() => download(`evolve-${song.label}-${first}-${last}.run.json`, JSON.stringify(runner.save()))}>
-                  Save run
-                </button>
-                <label className="ev-file">
-                  Load run
-                  <input
-                    type="file"
-                    accept=".json,application/json"
-                    disabled={busy}
-                    onChange={async (e) => {
-                      const f = e.target.files?.[0];
-                      if (!f) return;
-                      try {
-                        const r = JSON.parse(await f.text()) as SavedRun;
-                        if (r.version !== 1) throw new Error("not a saved run");
-                        setResume(r);
-                        setBody(r.body ?? "female");
-                        setFirst(r.first);
-                        setLast(r.last);
-                        setMsg("");
-                      } catch (err) {
-                        setMsg(err instanceof Error ? err.message : String(err));
-                      }
-                    }}
-                  />
-                </label>
-              </div>
-              )}
+              <RunControls
+                mode={mode}
+                busy={busy}
+                label={song.label}
+                first={first}
+                last={last}
+                resume={resume}
+                start={start}
+                onLoaded={loadRun}
+                onError={setMsg}
+              />
             </>
           )}
-          {mode === "ear" ? (
-          <p className="ev-status">{ear.error ? <span className="error">{ear.error}</span> : ear.status || (song ? "ready" : "")}</p>
-          ) : (
-          <p className="ev-status">
-            {runner.error ? <span className="error">{runner.error}</span> : runner.status || (song ? "ready" : "")}
-            {lastRec && (
-              <>
-                {" "}
-                / generation {lastRec.gen} / {lastRec.evals} voices scored / best loss {runner.best?.loss.toFixed(3)} / {fmtTime(lastRec.elapsed)}
-              </>
-            )}
-          </p>
-          )}
+          <RunStatus mode={mode} ready={!!song} />
         </div>
       </Screen>
 
@@ -559,138 +298,114 @@ export function EvolvePage() {
       {mode === "ear" ? (
         <EarPanel label={song?.label ?? ""} />
       ) : (
-      <>
-      <Screen className="ev-loss" title="Loss" sub={sweep ? "log scale, lower is closer; dashed lines start a new window (a new clip, so the level jumps)" : "log scale, lower is closer"}>
-        <Canvas
-          deps={[tick]}
-          draw={(c) =>
-            drawSeries(
-              c,
-              [
-                { label: "worst", color: INK.red, pts: h.map((r) => [r.gen, r.worst]) },
-                { label: "median", color: INK.green, pts: h.map((r) => [r.gen, r.median]) },
-                { label: "generation best", color: INK.amber, pts: h.map((r) => [r.gen, r.genBest]) },
-                { label: "best so far", color: INK.blue, pts: h.map((r) => [r.gen, r.best]) },
-              ],
-              { logY: true, marks: sweep?.marks.map((m) => m + 0.5) },
-            )
-          }
+        <EvolveCharts
+          runner={runner}
+          tick={tick}
+          song={song}
+          first={first}
+          last={last}
+          playing={playing}
+          listen={listen}
+          recordingSamples={recordingSamples}
         />
-        <div className="ev-legend">
-          <span style={{ color: INK.blue }}>best so far</span>
-          <span style={{ color: INK.amber }}>generation best</span>
-          <span style={{ color: INK.green }}>median</span>
-          <span style={{ color: INK.red }}>worst</span>
-        </div>
-      </Screen>
-
-      <Screen className="ev-comp" title="Parts of the loss" sub="weighted, of the best">
-        <Canvas
-          deps={[tick]}
-          draw={(c) =>
-            info &&
-            drawSeries(
-              c,
-              info.compNames.map((n, i) => ({ label: n, color: [INK.blue, INK.amber, INK.green, INK.pink][i % 4], pts: h.map((r) => [r.gen, r.comps[i] * info.compWeights[i]] as [number, number]) })),
-              { zeroY: true },
-            )
-          }
-        />
-        <div className="ev-legend">
-          {info?.compNames.map((n, i) => (
-            <span key={n} style={{ color: [INK.blue, INK.amber, INK.green, INK.pink][i % 4] }}>
-              {n} {lastRec ? lastRec.comps[i].toFixed(3) : ""}
-            </span>
-          ))}
-        </div>
-      </Screen>
-
-      <Screen className="ev-sigma" title="Step size" sub="shrinks as it settles">
-        <Canvas deps={[tick]} draw={(c) => drawSeries(c, [{ label: "sigma", color: INK.pink, pts: h.map((r) => [r.gen, r.sigma]) }], { zeroY: true })} />
-        <div className="ev-legend">
-          <span style={{ color: INK.pink }}>sigma</span>
-          {lastRec && <span>level gap {lastRec.gap.toFixed(1)} dB (render minus recording, part of the score)</span>}
-        </div>
-      </Screen>
-
-      <Screen className="ev-genes" title="Genes of the best" sub="rows are knobs, columns generations, blue low and red high in the knob's range">
-        <Canvas deps={[tick]} draw={(c) => drawGenes(c, h, chartGenes.map((g) => g.name))} />
-      </Screen>
-
-      <Screen
-        className="ev-spec"
-        title="Spectrograms"
-        sub={runner.picture ? `best at generation ${runner.pictureGen}` : "recording / best render / difference"}
-        tools={
-          <>
-            <button className={`chip${playing === "ref" ? " on" : ""}`} disabled={!recordingSamples} onClick={() => listen("ref", recordingSamples, song?.rate)}>
-              {playing === "ref" ? "Stop" : "Hear recording"}
-            </button>
-            <button className={`chip${playing === "best" ? " on" : ""}`} disabled={!runner.picture} onClick={() => listen("best", runner.picture?.samples)}>
-              {playing === "best" ? "Stop" : "Hear best"}
-            </button>
-            <button className={`chip${playing === "default" ? " on" : ""}`} disabled={!runner.defaultPicture} onClick={() => listen("default", runner.defaultPicture?.samples)}>
-              {playing === "default" ? "Stop" : "Hear default voice"}
-            </button>
-          </>
-        }
-      >
-        <Canvas deps={[tick]} draw={(c) => runner.picture && info && drawSpectro(c, runner.picture.ref, runner.picture.sim, info.bands)} />
-      </Screen>
-
-      <Screen
-        className="ev-params"
-        title="Best voice"
-        sub={runner.picture ? `sung vowels: ${runner.picture.vowels.map((v) => v ?? "-").join(" ")}` : ""}
-        tools={
-          <button
-            className="chip"
-            disabled={!h.length}
-            onClick={() =>
-              download(
-                `best-${song?.label ?? "voice"}.json`,
-                JSON.stringify({ song: song?.label, notes: [first, last], loss: runner.best, genes: genes.map((g, i) => ({ ...g, value: values(runner.bestX)[i], unit: runner.bestX[i] })), vowels: runner.picture?.vowels }, null, 2),
-              )
-            }
-          >
-            Download best.json
-          </button>
-        }
-      >
-        <div className="ev-table">
-          <table>
-            <thead>
-              <tr>
-                <th>knob</th>
-                <th>default</th>
-                <th>best</th>
-                <th>range</th>
-              </tr>
-            </thead>
-            <tbody>
-              {genes.map((g, i) => {
-                const u = runner.bestX[i] ?? (g.def - g.lo) / (g.hi - g.lo);
-                const d = (g.def - g.lo) / (g.hi - g.lo);
-                return (
-                  <tr key={g.name}>
-                    <td>{g.name}</td>
-                    <td>{g.def.toFixed(2)}</td>
-                    <td>{(g.lo + u * (g.hi - g.lo)).toFixed(2)}</td>
-                    <td>
-                      <span className="ev-bar">
-                        <i style={{ left: `${d * 100}%` }} className="def" />
-                        <i style={{ left: `${u * 100}%` }} className="val" />
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Screen>
-      </>
       )}
     </div>
+  );
+}
+
+interface ControlsProps {
+  mode: Mode;
+  busy: boolean;
+  /** the song's label, for the saved run's file name */
+  label: string;
+  first: number;
+  last: number;
+  resume: SavedRun | null;
+  start: (withResume: boolean) => void;
+  onLoaded: (r: SavedRun) => void;
+  onError: (msg: string) => void;
+}
+
+/** Start, stop, save and load: the ear's buttons or the runner's. */
+function RunControls(props: ControlsProps) {
+  const { mode, busy, label, first, last, resume, start } = props;
+  const sweep = runner.sweep;
+  const h = runner.history;
+  return mode === "ear" ? (
+    <div className="ev-row">
+      {ear.running ? (
+        <button className="primary" onClick={() => ear.stop()}>
+          Stop
+        </button>
+      ) : (
+        <button className="primary" disabled={busy} onClick={() => start(false)}>
+          Start listening
+        </button>
+      )}
+      <span className="hint">your answers are kept in out/evolve/ear-answers.json and carry over to any clip</span>
+    </div>
+  ) : (
+    <div className="ev-row">
+      {runner.running ? (
+        <>
+          <button className="primary" onClick={() => runner.stop()}>
+            Stop
+          </button>
+          {sweep?.phase === "windows" && <button onClick={() => runner.skipToFull()}>Sing the whole section now</button>}
+        </>
+      ) : (
+        <>
+          <button className="primary" onClick={() => start(false)}>
+            {mode === "sweep" ? "Start a sweep" : "Start a new run"}
+          </button>
+          {resume && mode === "range" && (
+            <button onClick={() => start(true)}>
+              Continue loaded run ({resume.history.length} generations)
+            </button>
+          )}
+        </>
+      )}
+      <button disabled={!h.length || !!sweep} onClick={() => download(`evolve-${label}-${first}-${last}.run.json`, JSON.stringify(runner.save()))}>
+        Save run
+      </button>
+      <label className="ev-file">
+        Load run
+        <input
+          type="file"
+          accept=".json,application/json"
+          disabled={busy}
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            try {
+              const r = JSON.parse(await f.text()) as SavedRun;
+              if (r.version !== 1) throw new Error("not a saved run");
+              props.onLoaded(r);
+            } catch (err) {
+              props.onError(err instanceof Error ? err.message : String(err));
+            }
+          }}
+        />
+      </label>
+    </div>
+  );
+}
+
+/** One line: the running optimiser's status, or its error. */
+function RunStatus({ mode, ready }: { mode: Mode; ready: boolean }) {
+  const h = runner.history;
+  const lastRec = h[h.length - 1];
+  return mode === "ear" ? (
+    <p className="ev-status">{ear.error ? <span className="error">{ear.error}</span> : ear.status || (ready ? "ready" : "")}</p>
+  ) : (
+    <p className="ev-status">
+      {runner.error ? <span className="error">{runner.error}</span> : runner.status || (ready ? "ready" : "")}
+      {lastRec && (
+        <>
+          {" "}
+          / generation {lastRec.gen} / {lastRec.evals} voices scored / best loss {runner.best?.loss.toFixed(3)} / {fmtTime(lastRec.elapsed)}
+        </>
+      )}
+    </p>
   );
 }
