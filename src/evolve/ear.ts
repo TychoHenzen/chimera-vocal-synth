@@ -9,14 +9,17 @@
  * whole archive without rendering anything again. The questions come from the archive: the voice
  * the model rates best against the one most likely to beat it.
  *
- * Answers are saved by gene name (out/evolve/ear-answers.json through the dev server, and in the
- * browser), so they outlive a change of clip or a change to the genome; on a new clip the voices
- * answered about are rendered again.
+ * Answers are saved by gene name (answers.ts), so they outlive a change of clip or a change to the
+ * genome; on a new clip the voices answered about are rendered again.
  */
 import { call } from "../wasm/chimera.ts";
-import { agreement, fit, matchLoudness, nextPair, objective, reach, reward, rng, SEARCH_WEIGHTS, standardise, standardOf, type Model, type Pair, type SearchWeights } from "./preference.ts";
+import { loadAnswers, saveAnswers, type Answer } from "./answers.ts";
+import {
+  agreement, fit, matchLoudness, nextPair, objective, pairKey, reach, reward, rng, SEARCH_WEIGHTS, standardise, standardOf,
+  type Model, type Pair, type SearchWeights,
+} from "./preference.ts";
 import { Pool } from "./pool.ts";
-import { unit } from "./sweep.ts";
+import { deal, gather, unit } from "./sweep.ts";
 import type { CsdNote, ProblemInfo, SingerBody } from "./types.ts";
 
 /**
@@ -38,18 +41,6 @@ const POP = 16;
 const SEARCH_SIGMA = 0.08;
 /** Questions come from the voices the search rates best, plus these. */
 const SHORTLIST = 40;
-const FILE = "ear-answers.json";
-const STORE = "chimera.ear.answers";
-
-/** One answer, by gene name and value, so it survives a change of genome. */
-export interface Answer {
-  a: Record<string, number>;
-  b: Record<string, number>;
-  /** 1: A was better, 0: B was, 0.5: the same */
-  y: number;
-  /** ms since 1970 */
-  at: number;
-}
 
 export interface Voice {
   /** the whole genome, 0..1 per gene (the notes' genes at their defaults) */
@@ -160,8 +151,8 @@ export class EarRunner {
     return this.searched.reduce((t, i) => t + (x[i] - this.def[i]) ** 2, 0);
   }
 
-  async start(cfg: EarConfig): Promise<void> {
-    if (this.running) return;
+  /** Forget the last run (the runner is the page's, so its state would leak into this one). */
+  private reset(cfg: EarConfig): void {
     this.running = true;
     this.stopping = false;
     this.error = "";
@@ -177,54 +168,25 @@ export class EarRunner {
     // evolveProblem below drops the main thread's optimiser: the search must start a new one
     this.restart = true;
     this.status = "starting the engines";
+  }
+
+  async start(cfg: EarConfig): Promise<void> {
+    if (this.running) return;
+    this.reset(cfg);
     this.emit();
-    const problem = { notes: cfg.notes, first: cfg.first, last: cfg.last, wav: Array.from(cfg.wav), rate: cfg.rate, wavT0: cfg.wavT0, body: cfg.body };
-    const n = Math.max(2, cfg.workers);
-    const pool = (this.pool = new Pool(n));
+    const { notes, first, last, rate, wavT0, body } = cfg;
+    const problem = { notes, first, last, wav: Array.from(cfg.wav), rate, wavT0, body };
+    const pool = (this.pool = new Pool(Math.max(2, cfg.workers)));
     try {
       const info = call<ProblemInfo>("evolveProblem", problem);
       this.info = info;
       this.def = info.genes.map(unit);
       this.searched = info.genes.slice(0, info.nGlobal).flatMap((g, i) => (FROZEN_GENES.includes(g.name) ? [] : [i]));
-      await Promise.all(Array.from({ length: n }, (_, i) => pool.send(i, { type: "init", problem })));
+      await pool.all(pool.size, { type: "init", problem });
       this.answers = await loadAnswers();
-
-      // the archive to start from: the default, every voice answered about, and variations
       this.status = "rendering the first voices";
       this.emit();
-      const r = rng(cfg.seed);
-      const gauss = () => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r());
-      const seeds: { x: number[]; origin: Voice["origin"] }[] = [{ x: this.def.slice(), origin: "default" }];
-      const keyOf = (x: number[]) => x.map((v) => v.toFixed(4)).join(",");
-      const index = new Map<string, number>([[keyOf(this.def), 0]]);
-      const answered = this.answers.map((a) => [a.a, a.b].map((named) => {
-        const x = this.genome(named);
-        const k = keyOf(x);
-        if (!index.has(k)) {
-          index.set(k, seeds.length);
-          seeds.push({ x, origin: "answered" });
-        }
-        return index.get(k)!;
-      }));
-      for (let k = 0; k < EXPLORE; k++) {
-        const x = this.def.slice();
-        for (const i of this.searched) x[i] = Math.min(1, Math.max(0, x[i] + EXPLORE_STEP * gauss()));
-        seeds.push({ x, origin: "variation" });
-      }
-      const feats = await this.features(pool, seeds.map((s) => s.x));
-      // archive index 0 is the default everywhere (the shortlist, renderFavourite)
-      if (!feats[0]) throw new Error("the default voice did not render");
-      seeds.forEach((s, k) => feats[k] && this.voices.push({ x: s.x, f: feats[k]!, dist2: this.dist2(s.x), origin: s.origin, score: 0 }));
-      // a voice that blew up drops out, so map seed positions to archive positions
-      const at: number[] = [];
-      let v = 0;
-      feats.forEach((f) => at.push(f ? v++ : -1));
-      this.answers.forEach((a, k) => {
-        const [ia, ib] = answered[k].map((s) => at[s]);
-        if (ia < 0 || ib < 0) return;
-        this.pairs.push({ a: ia, b: ib, y: a.y });
-        this.asked.add(pairKey(ia, ib));
-      });
+      await this.seedArchive(pool, cfg.seed);
       this.refit();
       await this.ask(pool);
       await this.search(pool);
@@ -237,6 +199,54 @@ export class EarRunner {
       this.status = this.error ? "" : "stopped";
       this.emit();
     }
+  }
+
+  /**
+   * The voices to start from: the default, every voice answered about, and variations around the
+   * default. Returns them, and for each saved answer the positions of its two voices among them.
+   */
+  private seedVoices(seed: number): { seeds: { x: number[]; origin: Voice["origin"] }[]; answered: number[][] } {
+    const r = rng(seed);
+    const gauss = () => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r());
+    const seeds: { x: number[]; origin: Voice["origin"] }[] = [{ x: this.def.slice(), origin: "default" }];
+    const keyOf = (x: number[]) => x.map((v) => v.toFixed(4)).join(",");
+    const index = new Map<string, number>([[keyOf(this.def), 0]]);
+    const answered = this.answers.map((a) =>
+      [a.a, a.b].map((named) => {
+        const x = this.genome(named);
+        const k = keyOf(x);
+        if (!index.has(k)) {
+          index.set(k, seeds.length);
+          seeds.push({ x, origin: "answered" });
+        }
+        return index.get(k)!;
+      }),
+    );
+    for (let k = 0; k < EXPLORE; k++) {
+      const x = this.def.slice();
+      for (const i of this.searched) x[i] = Math.min(1, Math.max(0, x[i] + EXPLORE_STEP * gauss()));
+      seeds.push({ x, origin: "variation" });
+    }
+    return { seeds, answered };
+  }
+
+  /** Render the starting voices into the archive and turn the saved answers into pairs. */
+  private async seedArchive(pool: Pool, seed: number): Promise<void> {
+    const { seeds, answered } = this.seedVoices(seed);
+    const feats = await this.features(pool, seeds.map((s) => s.x));
+    // archive index 0 is the default everywhere (the shortlist, renderFavourite)
+    if (!feats[0]) throw new Error("the default voice did not render");
+    seeds.forEach((s, k) => feats[k] && this.voices.push({ x: s.x, f: feats[k]!, dist2: this.dist2(s.x), origin: s.origin, score: 0 }));
+    // a voice that blew up drops out, so map seed positions to archive positions
+    const at: number[] = [];
+    let v = 0;
+    feats.forEach((f) => at.push(f ? v++ : -1));
+    this.answers.forEach((a, k) => {
+      const [ia, ib] = answered[k].map((s) => at[s]);
+      if (ia < 0 || ib < 0) return;
+      this.pairs.push({ a: ia, b: ib, y: a.y });
+      this.asked.add(pairKey(ia, ib));
+    });
   }
 
   /** Record the listener's answer to the current question and move on. */
@@ -377,11 +387,11 @@ export class EarRunner {
 
   private async features(pool: Pool, xs: number[][], lanes?: number[]): Promise<(number[] | null)[]> {
     const ws = lanes ?? Array.from({ length: pool.size }, (_, i) => i);
-    const chunks: number[][][] = ws.map(() => []);
-    xs.forEach((x, i) => chunks[i % ws.length].push(x));
-    const parts = await Promise.all(chunks.map((c, k) => (c.length ? pool.send<(number[] | null)[]>(ws[k], { type: "features", xs: c }) : Promise.resolve([]))));
-    const at = new Array<number>(ws.length).fill(0);
-    return xs.map((_, i) => parts[i % ws.length][at[i % ws.length]++]);
+    const hands = deal(xs, ws.length);
+    const parts = await Promise.all(
+      hands.map((c, k) => (c.length ? pool.send<(number[] | null)[]>(ws[k], { type: "features", xs: c }) : Promise.resolve([]))),
+    );
+    return gather(parts, xs.length);
   }
 
   /** The model's view of a voice: reward, its spread over the ensemble. */
@@ -389,38 +399,5 @@ export class EarRunner {
     if (!this.model) return null;
     const { r, spread } = reward(this.model, this.voices[i].f);
     return { r, spread };
-  }
-}
-
-const pairKey = (i: number, j: number) => (i < j ? `${i}:${j}` : `${j}:${i}`);
-
-/** The saved answers: the dev server's copy, else the browser's, else none. */
-async function loadAnswers(): Promise<Answer[]> {
-  try {
-    const r = await fetch(`/voiceref/saved/${FILE}`);
-    if (r.ok) return ((await r.json()) as { answers: Answer[] }).answers ?? [];
-  } catch {
-    /* no dev server */
-  }
-  try {
-    const s = localStorage.getItem(STORE);
-    if (s) return (JSON.parse(s) as { answers: Answer[] }).answers ?? [];
-  } catch {
-    /* storage blocked */
-  }
-  return [];
-}
-
-async function saveAnswers(answers: Answer[]): Promise<void> {
-  const body = JSON.stringify({ version: 1, answers }, null, 1);
-  try {
-    localStorage.setItem(STORE, body);
-  } catch {
-    /* storage blocked: the server copy still counts */
-  }
-  try {
-    await fetch(`/voiceref/save/${FILE}`, { method: "POST", body });
-  } catch {
-    /* no dev server: the browser copy still counts */
   }
 }

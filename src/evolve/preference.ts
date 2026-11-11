@@ -226,38 +226,60 @@ export function objective(m: Model, f: number[], dist2: number, heard: number[][
   return mean - sw.caution * spread - (slope / (2 * sw.beyond)) * out * out - sw.pull * dist2;
 }
 
+/** An unordered pair of voices as a key (archive indices), for the set of pairs already asked. */
+export const pairKey = (i: number, j: number) => (i < j ? `${i}:${j}` : `${j}:${i}`);
+
 /**
  * The next question, among `candidates` (indices into `feats`): the incumbent (the best by
  * `score`) against the voice that could most plausibly beat it (mean edge plus one spread),
  * skipping pairs already asked. With no model yet, the pair furthest apart in features among
  * those not asked, so the first answers are about differences the listener can hear.
  */
-export function nextPair(feats: number[][], candidates: number[], asked: Set<string>, m: Model | null, score: (i: number) => number): [number, number] | null {
-  const key = (i: number, j: number) => (i < j ? `${i}:${j}` : `${j}:${i}`);
+export function nextPair(
+  feats: number[][],
+  candidates: number[],
+  asked: Set<string>,
+  m: Model | null,
+  score: (i: number) => number,
+): [number, number] | null {
   if (candidates.length < 2) return null;
-  if (!m) {
-    const s = standardOf(candidates.map((i) => feats[i]));
-    let best: [number, number] | null = null;
-    let far = -1;
-    for (const i of candidates)
-      for (const j of candidates) {
-        if (j <= i || asked.has(key(i, j))) continue;
-        const zi = standardise(s, feats[i]);
-        const zj = standardise(s, feats[j]);
-        const d = zi.reduce((t, v, k) => t + (v - zj[k]) ** 2, 0);
-        if (d > far) {
-          far = d;
-          best = [i, j];
-        }
+  return m ? challengerPair(feats, candidates, asked, m, score) : farthestPair(feats, candidates, asked);
+}
+
+/** The pair not yet asked that lies furthest apart in standardised features. */
+function farthestPair(feats: number[][], candidates: number[], asked: Set<string>): [number, number] | null {
+  const s = standardOf(candidates.map((i) => feats[i]));
+  const z = new Map(candidates.map((i) => [i, standardise(s, feats[i])]));
+  let best: [number, number] | null = null;
+  let far = -1;
+  for (const i of candidates)
+    for (const j of candidates) {
+      if (j <= i || asked.has(pairKey(i, j))) continue;
+      const zi = z.get(i)!;
+      const zj = z.get(j)!;
+      const d = zi.reduce((t, v, k) => t + (v - zj[k]) ** 2, 0);
+      if (d > far) {
+        far = d;
+        best = [i, j];
       }
-    return best;
-  }
+    }
+  return best;
+}
+
+/** The best-rated voice that still has an unasked rival, against its most plausible challenger. */
+function challengerPair(
+  feats: number[][],
+  candidates: number[],
+  asked: Set<string>,
+  m: Model,
+  score: (i: number) => number,
+): [number, number] | null {
   const ranked = candidates.slice().sort((a, b) => score(b) - score(a));
   for (const inc of ranked) {
     let best = -1;
     let ucb = -Infinity;
     for (const c of candidates) {
-      if (c === inc || asked.has(key(inc, c))) continue;
+      if (c === inc || asked.has(pairKey(inc, c))) continue;
       const e = edge(m, feats[c], feats[inc]);
       if (e.mean + e.spread > ucb) {
         ucb = e.mean + e.spread;
