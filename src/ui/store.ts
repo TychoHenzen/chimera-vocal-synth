@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { engine } from "../audio/AudioEngine.ts";
 import { DEFAULT_SOURCE, type VoiceSource } from "../wasm/engine.ts";
-import { NEUTRAL, restTip, type HumanArtic } from "../wasm/engine.ts";
+import { NEUTRAL, profileSource, restTip, type HumanArtic } from "../wasm/engine.ts";
+import { loadFavourite, loadFavouriteOn, saveFavourite, saveFavouriteOn, type VoiceFavourite } from "../evolve/favourite.ts";
 import { defaultF0, PRESETS, sameBody, type BodyMix } from "./body.ts";
 import { creatureById } from "../wasm/engine.ts";
 import type { ParamDef } from "../wasm/types.ts";
@@ -74,6 +75,12 @@ interface State {
   /** show this body without rebuilding the voice yet (a drag in progress; setBody commits it) */
   previewBody: (b: BodyMix) => void;
   setSource: (v: Partial<VoiceSource>) => void;
+  /** the voice picked in Evolve's "Learn from my ear", and whether the voice sings with it */
+  favourite: VoiceFavourite | null;
+  useFavourite: boolean;
+  /** keep this voice and sing with it */
+  setFavourite: (f: VoiceFavourite) => void;
+  setUseFavourite: (on: boolean) => void;
   setArtic: (v: Partial<HumanArtic>, tipFree?: boolean) => void;
   setVolume: (v: number) => void;
   setHold: (h: boolean) => void;
@@ -117,12 +124,29 @@ let session = 0;
 
 const FIRST_BEAT = BEAT_PRESETS[0];
 
+/**
+ * The source settings that switching the favourite on or off sets: the favourite's own, or the
+ * defaults for the same settings. The engine takes the rest of the voice (tuning, body, vowels).
+ */
+function favouriteSource(f: VoiceFavourite | null, on: boolean): Partial<VoiceSource> {
+  if (!f) return {};
+  const src = profileSource(f.genes, f.body);
+  if (on) return src;
+  const keys = Object.keys(src) as (keyof VoiceSource)[];
+  return Object.fromEntries(keys.map((k) => [k, DEFAULT_SOURCE[k]])) as Partial<VoiceSource>;
+}
+
+const startFavourite = loadFavourite();
+const startOn = !!startFavourite && loadFavouriteOn();
+
 export const useStore = create<State>((set, get) => ({
   started: false,
   starting: false,
   startError: null,
   body: PRESETS.male,
-  source: { ...DEFAULT_SOURCE },
+  source: { ...DEFAULT_SOURCE, ...(startOn ? favouriteSource(startFavourite, true) : {}) },
+  favourite: startFavourite,
+  useFavourite: startOn,
   artic: (() => {
     const tip = restTip(NEUTRAL.jaw, NEUTRAL.tbX, NEUTRAL.tbY);
     return { ...NEUTRAL, ttX: tip.x, ttY: tip.y };
@@ -246,6 +270,7 @@ export const useStore = create<State>((set, get) => ({
         const s = get();
         engine.setVolume(s.volume);
         if (!sameBody(s.body, PRESETS.male)) engine.setBody(s.body);
+        if (s.useFavourite && s.favourite) engine.setProfile(s.favourite.genes, s.favourite.body);
         engine.setSource(s.source);
         engine.setArtic(s.artic, s.tipFree);
         if (s.mode === "bestiary") engine.setCreature(s.creature, s.cparams[s.creature]);
@@ -274,6 +299,24 @@ export const useStore = create<State>((set, get) => ({
     engine.setBody(b);
   },
   previewBody: (b) => set({ body: b }),
+  setFavourite: (f) => {
+    saveFavourite(f);
+    set({ favourite: f });
+    get().setUseFavourite(true);
+  },
+  setUseFavourite: (on) => {
+    const f = get().favourite;
+    if (on && !f) return;
+    saveFavouriteOn(on);
+    // a new voice, as with a body switch: a sung note or a sentence would hang
+    session++;
+    if (get().mode === "sing") stopSinging();
+    if (get().mode === "speak") stopSpeaking();
+    const src = favouriteSource(f, on);
+    set((s) => ({ useFavourite: on, source: { ...s.source, ...src } }));
+    engine.setProfile(on && f ? f.genes : {}, f?.body ?? "male");
+    engine.setSource(src);
+  },
   setSource: (v) => {
     set((s) => ({ source: { ...s.source, ...v } }));
     engine.setSource(v);

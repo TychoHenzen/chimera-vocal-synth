@@ -115,8 +115,12 @@ function ViewToggles() {
   const view = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
   const bestiary = useStore((s) => s.mode === "bestiary");
+  const favourite = useStore((s) => s.favourite);
+  const useFavourite = useStore((s) => s.useFavourite);
+  const setUseFavourite = useStore((s) => s.setUseFavourite);
   return (
     <div className="view-toggles">
+      {!bestiary && favourite && <Toggle label="Evolved voice" checked={useFavourite} onChange={setUseFavourite} />}
       {!bestiary && <Toggle label="3D" checked={view.threeD} onChange={(v) => setView({ threeD: v })} />}
       <Toggle label="Sound pressure" checked={view.pressure} onChange={(v) => setView({ pressure: v })} />
       {!bestiary && <Toggle label="Airflow" checked={view.particles} onChange={(v) => setView({ particles: v })} />}

@@ -10,13 +10,13 @@
 //! change and the loudness contour. The optimiser is a separable CMA-ES (one variance per gene).
 
 use crate::analysis::fft::{Fft, hann};
-use crate::anatomy::human::{ArticKey, BodyName, HumanBody};
+use crate::anatomy::human::{ArticKey, BodyName};
 use crate::csd::Note;
 use crate::math::{js_round, midi_to_hz};
 use crate::phonetics::Segment;
 use crate::phonetics::sing::{SongOptions, SungNote, plan_song};
-use crate::phonetics::vowel_data::VOWELS;
 use crate::voice::human_voice::{HumanVoice, SourcePatch, VoiceTuning};
+use crate::voice::profile::{VOWEL_KEYS, VoiceProfile};
 use serde::{Deserialize, Serialize};
 
 /// Output rate of every render.
@@ -32,19 +32,9 @@ const VIBRATO_DEFAULT: f64 = 35.0;
 
 /// The vowels a note may be re-sung as.
 pub const VOWEL_CHOICES: [&str; 13] = ["i", "ɪ", "e", "ɛ", "æ", "a", "ɑ", "ɔ", "o", "ʊ", "u", "ʌ", "ə"];
-/// Articulators whose vowel targets get an evolved offset.
-/// Only keys the vowel targets actually carry: an offset on a key a target lacks is never applied
-/// (velum, epilarynx and dorsum were inert genes here before; epilarynx now has its own gene).
-const ARTIC_OFFSETS: [ArticKey; 8] = [
-    ArticKey::Jaw,
-    ArticKey::TbX,
-    ArticKey::TbY,
-    ArticKey::Root,
-    ArticKey::LipAp,
-    ArticKey::LipProt,
-    ArticKey::LipWidth,
-    ArticKey::Larynx,
-];
+/// Articulators whose vowel targets get an evolved offset (see `VOWEL_KEYS`; velum, epilarynx and
+/// dorsum were inert genes here before; epilarynx now has its own gene).
+const ARTIC_OFFSETS: [ArticKey; 8] = VOWEL_KEYS;
 
 // ---------------------------------------------------------------------------------------------
 // genome
@@ -65,23 +55,28 @@ pub struct Spec {
     pub body: BodyName,
 }
 
+// Positions of genes in the genome (the order of `Spec::new`). The voice genes are read by name
+// (`VoiceProfile::from_named`); these are the ones the renderer applies itself, and those the
+// tests set directly.
+#[cfg(test)]
 const G_CHINK: usize = 0;
-const G_OQ: usize = 1;
-const G_SKEW: usize = 2;
+#[cfg(test)]
 const G_SHARP: usize = 3;
-const G_JITTER: usize = 4;
-const G_SHIMMER: usize = 5;
+#[cfg(test)]
 const G_SMOOTH: usize = 6;
-const G_WAVEGAIN: usize = 7;
-const G_PRESSURE_SCALE: usize = 8;
 const G_GAIN: usize = 9;
 const G_PRESSURE: usize = 10;
+#[cfg(test)]
 const G_TENSION: usize = 11;
 const G_VIBRATO: usize = 12;
 const G_TIME: usize = 13;
+#[cfg(test)]
 const G_SCALE: usize = 14;
+#[cfg(test)]
 const G_PHARYNX: usize = 15;
+#[cfg(test)]
 const G_TONGUE: usize = 16;
+#[cfg(test)]
 const G_LIP: usize = 17;
 /// Loudness shape shared by every note, in dB at the note's start, middle and end.
 const G_DYN_START: usize = 18;
@@ -90,24 +85,17 @@ const G_DYN_END: usize = 20;
 /// Loudness wobble: peak depth (dB) and rate (Hz), faded in over the first part of each note.
 const G_TREM_DB: usize = 21;
 const G_TREM_HZ: usize = 22;
-/// Source settings the song planner leaves at the voice's defaults.
-const G_BREATH: usize = 23;
-const G_ROUGH: usize = 24;
-const G_FRY: usize = 25;
 const G_VRATE: usize = 26;
 const G_DRIFT: usize = 27;
-const G_GLIDE: usize = 28;
+#[cfg(test)]
 const G_BRIGHT: usize = 29;
-const G_VISC: usize = 30;
-const G_WALL: usize = 31;
+#[cfg(test)]
 const G_ASPIRATION: usize = 32;
-/// Upper edge of the aspiration noise band (Hz).
+#[cfg(test)]
 const G_ASP_HZ: usize = 33;
-/// How far the epilarynx tube above the folds is narrowed on every vowel (0 wide, 1 narrowest).
-/// A narrow tube opening into a wide pharynx rings near 3-4 kHz (the singer's-formant cluster).
+#[cfg(test)]
 const G_EPI: usize = 34;
-/// The glottal pulse's return phase (ms): a roll-off above 1/(2 pi Ta), so the closure's sharpness
-/// can brighten 1.5-4 kHz without lifting 4-10 kHz with it.
+#[cfg(test)]
 const G_RETURN: usize = 35;
 const G_ARTIC: usize = 36;
 const G_NOTES: usize = G_ARTIC + ARTIC_OFFSETS.len();
@@ -159,7 +147,11 @@ impl Spec {
         g("wall_damping_scale", 0.2, 6.0, 1.0);
         g("aspiration_scale", 0.2, 8.0, 1.0);
         g("aspiration_hz", 2500.0, 9000.0, crate::voice::human_airway::ASPIRATION_HZ);
+        // how far the epilarynx tube above the folds is narrowed on every vowel (0 wide, 1
+        // narrowest): a narrow tube opening into a wide pharynx rings near 3-4 kHz
         g("epilarynx", 0.0, 0.95, 0.0);
+        // the glottal pulse's return phase (ms): a roll-off above 1/(2 pi Ta), so the closure's
+        // sharpness can brighten 1.5-4 kHz without lifting 4-10 kHz with it
         g("return_time_ms", 0.0, 0.5, 0.0);
         for k in ARTIC_OFFSETS {
             g(&format!("vowel_{}", k.name()), -0.2, 0.2, 0.0);
@@ -210,9 +202,6 @@ fn vowel_choice(v: f64) -> &'static str {
     VOWEL_CHOICES[i.min(VOWEL_CHOICES.len() - 1)]
 }
 
-fn is_vowel_label(s: &str) -> bool {
-    VOWELS.iter().any(|v| v.ipa == s)
-}
 
 // ---------------------------------------------------------------------------------------------
 // rendering
@@ -289,46 +278,23 @@ pub fn f0_contour(x: &[f64], rate: f64, notes: &[Note]) -> Vec<f64> {
 /// Sing `notes` (on the clip's own timeline) with the decoded values `v`. A non-empty `f0`
 /// (see `f0_contour`) is followed instead of the notes' pitch.
 fn render(notes: &[Note], v: &[f64], seconds: f64, f0: &[f64], singer: BodyName) -> Vec<f32> {
-    let body = HumanBody {
-        name: "evolved",
-        scale: v[G_SCALE],
-        pharynx: v[G_PHARYNX],
-        tongue_radius: v[G_TONGUE],
-        lip_width: v[G_LIP],
-    };
-    let mut voice = HumanVoice::new(FS, body, 2);
-    voice.set_tuning(VoiceTuning {
-        chink_scale: v[G_CHINK],
-        open_quotient_add: v[G_OQ],
-        skew_add: v[G_SKEW],
-        sharpness_add: v[G_SHARP],
-        jitter_scale: v[G_JITTER],
-        shimmer_scale: v[G_SHIMMER],
-        smooth_wave: v[G_SMOOTH],
-        wave_gain: v[G_WAVEGAIN],
-        pressure_scale: v[G_PRESSURE_SCALE],
-        gain_db: v[G_GAIN],
-        viscous_scale: v[G_VISC],
-        wall_damping_scale: v[G_WALL],
-        aspiration_scale: v[G_ASPIRATION],
-        aspiration_hz: v[G_ASP_HZ],
-        return_time: 0.001 * v[G_RETURN],
-    });
-    voice.set_source(&SourcePatch {
+    // the voice itself goes through the profile the live engine uses, so both sound the same
+    let spec = Spec::new(0, singer);
+    let profile = VoiceProfile::from_named(spec.genes[..G_NOTES].iter().map(|g| g.name.as_str()).zip(v.iter().copied()), singer);
+    let mut voice = HumanVoice::new(FS, profile.body_for(singer.body()), 2);
+    // the score compares absolute levels: Evolve's own gain, which the live voice leaves to its volume
+    voice.set_tuning(VoiceTuning { gain_db: v[G_GAIN], ..profile.tuning });
+    let mut src = SourcePatch {
         f0: Some(midi_to_hz(notes[0].midi)),
         voiced: Some(true),
         pressure: Some(v[G_PRESSURE]),
-        tension: Some(v[G_TENSION]),
-        breathiness: Some(v[G_BREATH]),
-        roughness: Some(v[G_ROUGH]),
-        fry: Some(v[G_FRY]),
         vibrato_rate: Some(v[G_VRATE]),
         // the measured contour already carries drift and vibrato
         drift: Some(if f0.is_empty() { v[G_DRIFT] } else { 0.0 }),
-        glide: Some(v[G_GLIDE]),
-        brightness: Some(v[G_BRIGHT]),
         ..Default::default()
-    });
+    };
+    src.merge(&profile.source);
+    voice.set_source(&src);
 
     let mut ns: Vec<Note> = notes.to_vec();
     for (k, n) in ns.iter_mut().enumerate() {
@@ -369,19 +335,7 @@ fn render(notes: &[Note], v: &[f64], seconds: f64, f0: &[f64], singer: BodyName)
             &sung,
             &SongOptions { body: singer.into(), bpm: 60.0, t0: (ns[i].start + v[G_TIME]).max(0.0), vibrato: if f0.is_empty() { v[G_VIBRATO] } else { 0.0 } },
         );
-        for g in plan.gestures.iter_mut() {
-            if g.strength >= 0.999 && g.label.is_some_and(|l| is_vowel_label(l.as_str())) {
-                for (ki, k) in ARTIC_OFFSETS.iter().enumerate() {
-                    if let Some(t) = g.targets.get(*k) {
-                        g.targets.set(*k, t + v[G_ARTIC + ki]);
-                    }
-                }
-                // ASSUMPTION: the vowel targets never set the epilarynx, so this is an absolute
-                // value held through every vowel; consonants keep the wide default.
-                let base = g.targets.get(ArticKey::Epilarynx).unwrap_or(0.0);
-                g.targets.set(ArticKey::Epilarynx, (base + v[G_EPI]).clamp(0.0, 1.0));
-            }
-        }
+        profile.apply_to_vowels(&mut plan.gestures);
         voice.schedule(&plan.gestures);
         i = j + 1;
     }
@@ -1081,5 +1035,52 @@ mod tests {
                 band_db(&out, 5000.0, 8000.0)
             );
         }
+    }
+
+    /// A voice found here must sound the same way different on the instrument: the live engine,
+    /// given the same genes as a profile, moves the ear features the same way Evolve's render does.
+    #[test]
+    fn the_live_engine_sings_an_evolved_voice_like_evolve_does() {
+        use crate::analysis::ear::{FEATURE_NAMES, features};
+        use crate::engine::Engine;
+        let spec = Spec::new(1, BodyName::Female);
+        let base: Vec<f64> = spec.genes.iter().map(|g| g.def).collect();
+        let mut fav = base.clone();
+        for (name, val) in [("epilarynx", 0.7), ("aspiration_scale", 4.0), ("body_pharynx", 0.92), ("breathiness", 0.4), ("vowel_jaw", 0.1), ("chink_scale", 2.0)] {
+            fav[spec.genes.iter().position(|g| g.name == name).unwrap()] = val;
+        }
+        let notes = crate::csd::parse("start,end,midi,syl
+0.1,1.3,67,a
+", "probe").unwrap();
+        let evolve = |v: &[f64]| {
+            let out = render(&notes, v, 1.4, &[], BodyName::Female);
+            features(&out.iter().map(|&s| s as f64).collect::<Vec<_>>(), FS)
+        };
+        let live = |v: &[f64]| {
+            let named = spec.genes[..G_NOTES].iter().map(|g| g.name.as_str()).zip(v.iter().copied());
+            let mut e = Engine::new(FS);
+            e.set_body(BodyName::Female);
+            e.set_profile(VoiceProfile::from_named(named, BodyName::Female));
+            let sung = [SungNote { midi: 67.0, beats: 1.2, syl: notes[0].syl.clone() }];
+            let plan = plan_song(&sung, &SongOptions { body: BodyName::Female.into(), bpm: 60.0, t0: 0.1, vibrato: VIBRATO_DEFAULT });
+            e.schedule(&plan.gestures, 0.0, true);
+            let mut out = vec![0f32; (1.4 * FS) as usize];
+            for b in out.chunks_mut(128) {
+                e.render(b);
+            }
+            features(&out.iter().map(|&s| s as f64).collect::<Vec<_>>(), FS)
+        };
+        let (e0, e1, l0, l1) = (evolve(&base), evolve(&fav), live(&base), live(&fav));
+        let mut checked = 0;
+        for k in 0..FEATURE_NAMES.len() {
+            let (de, dl) = (e1[k] - e0[k], l1[k] - l0[k]);
+            eprintln!("{:>18}: evolve {de:+7.2}  live {dl:+7.2}", FEATURE_NAMES[k]);
+            // the band levels (dB) that move clearly in Evolve's render
+            if k < 9 && de.abs() > 3.0 {
+                checked += 1;
+                assert!(dl.signum() == de.signum() && (dl - de).abs() < 0.5 * de.abs() + 2.0, "{}: evolve {de:+.1} dB, live {dl:+.1} dB", FEATURE_NAMES[k]);
+            }
+        }
+        assert!(checked >= 2, "the favourite moved only {checked} bands: not a test");
     }
 }

@@ -192,6 +192,11 @@ export function beatReady(body: BodyMix): Partial<HumanArtic> {
 // ------------------------------------------------------------------ anatomy
 
 /** Resting tongue-tip position (template coordinates) for a jaw and tongue body. */
+/** The source settings (tension, breathiness, ...) a voice found by Evolve sets; see `voiceProfile`. */
+export function profileSource(genes: Record<string, number>, body: "male" | "female"): Partial<VoiceSource> {
+  return call<{ source: Partial<VoiceSource> }>("voiceProfile", { genes, body }).source;
+}
+
 export function restTip(jaw: number, tbX: number, tbY: number): { x: number; y: number } {
   return call("restTip", { jaw, tbX, tbY });
 }

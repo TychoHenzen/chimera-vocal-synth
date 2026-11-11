@@ -17,9 +17,17 @@ import { call } from "../wasm/chimera.ts";
 import { agreement, fit, matchLoudness, nextPair, objective, reach, reward, rng, SEARCH_WEIGHTS, standardise, standardOf, type Model, type Pair, type SearchWeights } from "./preference.ts";
 import { Pool, unit, type CsdNote, type ProblemInfo, type SingerBody } from "./runner.ts";
 
-/** Genes the ear cannot judge here: loudness (playback matches it), timing, and what the
- * recording's pitch contour overrides (in the leave-one-out ranking each moved the loss by 0.000). */
-export const DEAF_GENES = ["gain_db", "time_shift_s", "lung_pressure", "vibrato_cents", "vibrato_rate_hz", "pitch_drift"];
+/**
+ * Genes the search leaves at the default. Some the ear cannot judge here: loudness (playback
+ * matches it), timing, and what the recording's pitch contour overrides (in the leave-one-out
+ * ranking each moved the loss by 0.000). The rest the live voice cannot play, so a favourite that
+ * leaned on them would sound different on the other pages: the loudness shape inside each note and
+ * the loudness wobble (the instrument sings at the level its keys and breath set).
+ */
+export const FROZEN_GENES = [
+  "gain_db", "time_shift_s", "lung_pressure", "vibrato_cents", "vibrato_rate_hz", "pitch_drift",
+  "dyn_start_db", "dyn_mid_db", "dyn_end_db", "tremolo_db", "tremolo_hz",
+];
 // ASSUMPTION: 10 variations at a step of 0.12 (of each gene's range) are different enough to hear
 // and few enough to judge; untuned.
 const EXPLORE = 10;
@@ -85,6 +93,8 @@ export class EarRunner {
   /** the voice the model rates best and the default, rendered, to compare outside the questions */
   favourite: { index: number; samples: Float32Array[]; gains: number[] } | null = null;
   weights: SearchWeights = { ...SEARCH_WEIGHTS };
+  /** the body the voices are evolved on */
+  body: SingerBody = "female";
   generations = 0;
   running = false;
   status = "";
@@ -153,6 +163,7 @@ export class EarRunner {
     this.running = true;
     this.stopping = false;
     this.error = "";
+    this.body = cfg.body;
     this.seed = cfg.seed;
     this.voices = [];
     this.pairs = [];
@@ -169,7 +180,7 @@ export class EarRunner {
       const info = call<ProblemInfo>("evolveProblem", problem);
       this.info = info;
       this.def = info.genes.map(unit);
-      this.searched = info.genes.slice(0, info.nGlobal).flatMap((g, i) => (DEAF_GENES.includes(g.name) ? [] : [i]));
+      this.searched = info.genes.slice(0, info.nGlobal).flatMap((g, i) => (FROZEN_GENES.includes(g.name) ? [] : [i]));
       await Promise.all(Array.from({ length: n }, (_, i) => pool.send(i, { type: "init", problem })));
       this.answers = await loadAnswers();
 

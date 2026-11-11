@@ -7,7 +7,7 @@
 //! - `render` advances in 128-sample sub-blocks on an absolute sample count. The sequencer ticks at
 //!   each sub-block boundary, so the output does not depend on the host's block size.
 //! - Rendering, gestures, releases, artic/source/gate changes and beat edits allocate nothing once
-//!   warm. A body or creature switch builds a new airway network (it allocates).
+//!   warm. A body, profile or creature switch builds a new airway network (it allocates).
 
 use crate::anatomy::human::{ArticPatch, BodyMix, BodyName};
 use crate::control::beat_player::BeatPlayer;
@@ -16,6 +16,7 @@ use crate::creatures::types::CreatureDef;
 use crate::creatures::voice::{CreatureTelemetry, CreatureVoice};
 use crate::phonetics::beatbox::{BeatStep, MAX_SOUND_GESTURES};
 use crate::voice::human_voice::{HumanVoice, SourcePatch, VoiceTelemetry};
+use crate::voice::profile::VoiceProfile;
 
 /// Samples per sub-block: the browser's render quantum, kept for every host.
 pub const SUB_BLOCK: usize = 128;
@@ -56,17 +57,22 @@ pub struct Engine {
     beat: BeatPlayer,
     /// a creature playing instead of the human voice (whose clock then stands still)
     creature: Option<CreatureVoice>,
+    /// the voice found by Evolve (default: the plain voice), kept across body switches
+    profile: VoiceProfile,
 }
 
 impl Engine {
     pub fn new(sample_rate: f64) -> Engine {
         crate::init();
         let body = BodyMix::MALE;
-        Engine { sample_rate, body, voice: Self::make_voice(sample_rate, body), gate_level: 0.0, pos: 0, scratch: Vec::with_capacity(MAX_SCHEDULE), beat: BeatPlayer::new(), creature: None }
+        let profile = VoiceProfile::default();
+        Engine { sample_rate, body, voice: Self::make_voice(sample_rate, body, &profile), gate_level: 0.0, pos: 0, scratch: Vec::with_capacity(MAX_SCHEDULE), beat: BeatPlayer::new(), creature: None, profile }
     }
 
-    fn make_voice(fs: f64, body: BodyMix) -> HumanVoice {
-        let mut v = HumanVoice::new(fs, body.body(), if fs > 60000.0 { 1 } else { 2 });
+    fn make_voice(fs: f64, body: BodyMix, profile: &VoiceProfile) -> HumanVoice {
+        // a new voice starts with the default tuning: the profile goes on every voice built
+        let mut v = HumanVoice::new(fs, profile.body_for(body.body()), if fs > 60000.0 { 1 } else { 2 });
+        v.set_tuning(profile.tuning);
         v.set_source(&SourcePatch::f0(default_f0(body)));
         v
     }
@@ -88,10 +94,31 @@ impl Engine {
     pub fn set_body(&mut self, body: impl Into<BodyMix>) -> VoiceInfo {
         let body: BodyMix = body.into();
         let body = BodyMix::new(body.female, body.child);
-        let prev = core::mem::replace(&mut self.voice, Self::make_voice(self.sample_rate, body));
+        self.rebuild(body, Some(default_f0(body)))
+    }
+
+    /// Sing with the voice found by Evolve (`VoiceProfile::default()`: the plain voice). Its
+    /// source settings replace the current ones; everything else carries over as in `set_body`,
+    /// the pitch included. Allocates (a new airway network).
+    pub fn set_profile(&mut self, profile: VoiceProfile) -> VoiceInfo {
+        self.profile = profile;
+        let info = self.rebuild(self.body, None);
+        self.voice.set_source(&profile.source);
+        info
+    }
+
+    pub fn profile(&self) -> &VoiceProfile {
+        &self.profile
+    }
+
+    /// A new voice for `body` with the performer's settings carried over (pitch `f0`, or kept).
+    fn rebuild(&mut self, body: BodyMix, f0: Option<f64>) -> VoiceInfo {
+        let prev = core::mem::replace(&mut self.voice, Self::make_voice(self.sample_rate, body, &self.profile));
         self.body = body;
         let mut src = SourcePatch::from_source(&prev.source);
-        src.f0 = Some(default_f0(body));
+        if f0.is_some() {
+            src.f0 = f0;
+        }
         self.voice.set_source(&src);
         let mut target = ArticPatch::default();
         for (k, x) in prev.artic.target.to_array().iter().enumerate() {
@@ -182,6 +209,9 @@ impl Engine {
             g.t0 += off;
             g.t1 += off;
             self.scratch.push(g);
+        }
+        if !self.profile.neutral_vowels() {
+            self.profile.apply_to_vowels(&mut self.scratch);
         }
         if replace {
             self.voice.cancel_score();

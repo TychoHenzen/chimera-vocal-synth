@@ -4,7 +4,7 @@
 //! runs on the audio thread: these calls allocate.
 
 use chimera::airway::frequency::{find_peaks, transfer_function};
-use chimera::anatomy::human::{BodyMix, HumanArtic, HumanFrame};
+use chimera::anatomy::human::{BodyMix, BodyName, HumanArtic, HumanFrame};
 use chimera::control::beat_player::BeatPlayer;
 use chimera::creatures::voice::CreatureVoice;
 use chimera::math;
@@ -14,6 +14,7 @@ use chimera::phonetics::sing::{self, MelismaOptions, NoteOnOptions, SongOptions,
 use chimera::phonetics::english::EnglishG2P;
 use chimera::phonetics::{Segment, Syllable, ipa, songs, syllables, vowel_data};
 use chimera::voice::human_airway::HumanAirway;
+use chimera::voice::profile::VoiceProfile;
 use serde_json::{Value, json};
 use std::cell::RefCell;
 
@@ -53,6 +54,21 @@ fn arg<T: serde::de::DeserializeOwned>(req: &Value, key: &str) -> Result<T, Stri
 
 fn to_json<T: serde::Serialize>(v: &T) -> Res {
     serde_json::to_value(v).map_err(|e| e.to_string())
+}
+
+/// A voice found by Evolve, from `{"genes": {name: value}, "body": "male" | "female"}` (the body it
+/// was evolved on); no genes is the plain voice. Shared by `engine_set_profile` and `voiceProfile`.
+pub fn profile_of(bytes: &[u8]) -> Result<VoiceProfile, String> {
+    let req: Value = serde_json::from_slice(bytes).map_err(|e| format!("bad request: {e}"))?;
+    Ok(profile_from(&req))
+}
+
+fn profile_from(req: &Value) -> VoiceProfile {
+    let body = BodyName::parse(req.get("body").and_then(Value::as_str).unwrap_or("male"));
+    match req.get("genes").and_then(Value::as_object) {
+        Some(m) => VoiceProfile::from_named(m.iter().filter_map(|(k, v)| v.as_f64().map(|x| (k.as_str(), x))), body),
+        None => VoiceProfile::default(),
+    }
 }
 
 fn model<'a>(st: &'a mut State, req: &Value) -> Result<&'a mut Model, String> {
@@ -159,6 +175,8 @@ fn dispatch(st: &mut State, req: &Value) -> Res {
         "leadIn" => Ok(json!(BeatPlayer::lead_in(&arg::<String>(req, "id")?, arg::<BodyMix>(req, "body")?))),
         // ---------------------------------------------------------------- evolving the voice
         "csdNotes" => to_json(&chimera::csd::parse(&arg::<String>(req, "text")?, "notes file")?),
+        // the source settings a profile sets, for the page's controls (the engine applies the rest)
+        "voiceProfile" => Ok(json!({ "source": profile_from(req).source })),
         "evolveProblem" => {
             let notes: Vec<chimera::csd::Note> = arg(req, "notes")?;
             // 16-bit samples keep the JSON small; `wavT0` is where in the song they start

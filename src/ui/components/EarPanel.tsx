@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { EarRunner } from "../../evolve/ear.ts";
+import { useStore } from "../store.ts";
 import { Screen } from "./Screen.tsx";
 
 /** One ear runner for the page's life, like the Evolve page's runner. */
@@ -188,6 +189,18 @@ export function EarPanel(props: { label: string }) {
               }}
             >
               Save favourite
+            </button>
+            <button
+              className="chip"
+              disabled={!fav}
+              onClick={() => {
+                if (!fav) return;
+                const v = ear.voices[fav.index];
+                useStore.getState().setFavourite({ genes: ear.named(v.x), body: ear.body, song: props.label, answers: ear.answers.length, at: Date.now() });
+                setSaved("the other pages now sing with it (switch it off with Evolved voice, above the vocal tract)");
+              }}
+            >
+              Use as my voice
             </button>
           </>
         }

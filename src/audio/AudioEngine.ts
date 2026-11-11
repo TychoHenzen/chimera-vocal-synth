@@ -214,6 +214,11 @@ export class AudioEngine {
     this.send({ type: "body", body });
   }
 
+  /** Sing with a voice found by Evolve ({}: the plain voice). Rebuilds the airway, like setBody. */
+  setProfile(genes: Record<string, number>, body: "male" | "female"): void {
+    this.send({ type: "profile", genes, body });
+  }
+
   gate(level: number): void {
     this.send({ type: "gate", level });
   }

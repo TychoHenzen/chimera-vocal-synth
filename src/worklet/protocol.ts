@@ -23,6 +23,8 @@ export type ToWorklet =
   /** gestures planned on the main thread with times relative to "now" (the worklet adds its clock) */
   | { type: "schedule"; gestures: Gesture[]; segments: PlannedSegment[]; end: number; id: number; replace: boolean; lead?: number }
   | { type: "stopSpeech" }
+  /** sing with a voice found by Evolve (its genes by name, and the body it was evolved on); no genes: the plain voice */
+  | { type: "profile"; genes: Record<string, number>; body: BodyName }
   /** switch the active voice: "human" or a creature id */
   | { type: "creature"; id: string; params?: Record<string, number> }
   | { type: "cparams"; values: Record<string, number> }

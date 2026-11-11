@@ -140,6 +140,11 @@ class ChimeraProcessor extends AudioWorkletProcessor {
         if (m.segments.length) this.post({ type: "planned", id: m.id, t0: off, end: m.end + off, segments: m.segments.map((s) => ({ ...s, t0: s.t0 + off, t1: s.t1 + off })) });
         break;
       }
+      case "profile":
+        // a new airway (the body's dimensions may change its node counts)
+        this.engineJson("engine_set_profile", { genes: m.genes, body: m.body });
+        this.postReady();
+        break;
       case "stopSpeech":
         x.engine_stop_speech(h);
         break;

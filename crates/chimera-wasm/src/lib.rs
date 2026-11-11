@@ -279,6 +279,25 @@ pub unsafe extern "C" fn engine_set_body(h: *mut Handle, female: f64, child: f64
     h.engine.telemetry(&mut h.tele); // resize the telemetry buffers for the new voice
 }
 
+/// Sing with a voice found by Evolve: `{"genes": {name: value}, "body": "male" | "female"}` (the
+/// body it was evolved on) as UTF-8 JSON at `ptr..ptr+len`; no genes is the plain voice. See
+/// `VoiceProfile::from_named`. Allocates (not real-time). Returns 0, or 1 with `{error}`.
+///
+/// # Safety
+/// `h` must be a live handle; `ptr..ptr+len` readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn engine_set_profile(h: *mut Handle, ptr: *const u8, len: usize) -> u32 {
+    let h = handle!(h);
+    let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
+    let profile = match api::profile_of(bytes) {
+        Ok(p) => p,
+        Err(e) => return api::set_result(Err(e)),
+    };
+    h.engine.set_profile(profile);
+    h.engine.telemetry(&mut h.tele); // resize the telemetry buffers for the new voice
+    api::set_result(Ok(serde_json::json!({})))
+}
+
 /// # Safety
 /// `h` must be a live handle.
 #[unsafe(no_mangle)]

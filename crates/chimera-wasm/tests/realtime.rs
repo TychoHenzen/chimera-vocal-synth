@@ -1,7 +1,8 @@
 //! The audio-thread ABI allocates nothing once an engine exists: from idle into the first labelled
 //! speech gestures, telemetry snapshots, the sequencer and pad hits, releases and parameter
 //! changes; and, after a creature switch (which may allocate), the creature's rendering,
-//! telemetry, params and calls. Driven through the same C ABI the worklet uses.
+//! telemetry, params and calls. Driven through the same C ABI the worklet uses. With a voice
+//! found by Evolve (a profile) the same holds, and the profile survives a body switch.
 use chimera::phonetics::ipa::tokenize_ipa;
 use chimera::phonetics::planner::{PlanOptions, plan_utterance};
 use chimera_wasm::*;
@@ -105,6 +106,81 @@ fn the_audio_thread_abi_does_not_allocate() {
             }
             assert_eq!(allocs() - before, 0, "{}: the creature's audio path allocated", def.id);
         }
+        engine_free(h);
+    }
+}
+
+/// An engine that says "hello world" (after `setup`), rendered for 0.6 s.
+unsafe fn hello(setup: impl Fn(*mut Handle)) -> Vec<f32> {
+    let plan = plan_utterance(&tokenize_ipa("ËˆhÉ›loÊŠ ËˆwÉ�ld"), &PlanOptions { body: "female".into(), t0: 0.0, f0: Some(205.0), ..Default::default() });
+    unsafe {
+        let h = engine_new(48000.0);
+        setup(h);
+        let rec = std::slice::from_raw_parts_mut(engine_records(h), plan.gestures.len() * GESTURE_RECORD);
+        for (i, g) in plan.gestures.iter().enumerate() {
+            write_gesture(g, &mut rec[i * GESTURE_RECORD..(i + 1) * GESTURE_RECORD]);
+        }
+        engine_schedule(h, plan.gestures.len(), 0.03, 1);
+        let mut out = Vec::new();
+        for _ in 0..225 {
+            let p = engine_render(h, 128);
+            out.extend_from_slice(std::slice::from_raw_parts(p, 128));
+        }
+        engine_free(h);
+        out
+    }
+}
+
+const FAVOURITE: &str = r#"{"body":"female","genes":{"epilarynx":0.6,"vowel_jaw":0.1,"aspiration_scale":3,"body_pharynx":0.95,"breathiness":0.3}}"#;
+
+unsafe fn set_profile(h: *mut Handle, json: &str) {
+    unsafe { assert_eq!(engine_set_profile(h, json.as_ptr(), json.len()), 0) };
+}
+
+#[test]
+fn a_profile_changes_the_voice_and_survives_a_body_switch() {
+    unsafe {
+        let plain = hello(|h| engine_set_body(h, 1.0, 0.0));
+        let none = hello(|h| {
+            engine_set_body(h, 1.0, 0.0);
+            set_profile(h, "{}");
+        });
+        assert_eq!(plain, none, "no genes must be the plain voice, bit for bit");
+        let before = hello(|h| {
+            set_profile(h, FAVOURITE);
+            engine_set_body(h, 1.0, 0.0);
+        });
+        let after = hello(|h| {
+            engine_set_body(h, 1.0, 0.0);
+            set_profile(h, FAVOURITE);
+        });
+        assert_ne!(plain, after, "the profile changed nothing");
+        assert_eq!(before, after, "a body switch lost the profile");
+    }
+}
+
+#[test]
+fn a_profile_adds_no_allocation_to_the_audio_path() {
+    let plan = plan_utterance(&tokenize_ipa("ËˆhÉ›loÊŠ ËˆwÉ�ld"), &PlanOptions { body: "male".into(), t0: 0.0, f0: Some(110.0), ..Default::default() });
+    unsafe {
+        let h = engine_new(48000.0);
+        set_profile(h, FAVOURITE);
+        for _ in 0..40 {
+            engine_render(h, 128);
+        }
+        let before = allocs();
+        let rec = std::slice::from_raw_parts_mut(engine_records(h), plan.gestures.len() * GESTURE_RECORD);
+        for (i, g) in plan.gestures.iter().enumerate() {
+            write_gesture(g, &mut rec[i * GESTURE_RECORD..(i + 1) * GESTURE_RECORD]);
+        }
+        engine_schedule(h, plan.gestures.len(), 0.03, 1);
+        for b in 0..300 {
+            engine_render(h, 128);
+            if b % 6 == 0 {
+                engine_telemetry(h);
+            }
+        }
+        assert_eq!(allocs() - before, 0, "the profiled voice's audio path allocated");
         engine_free(h);
     }
 }
