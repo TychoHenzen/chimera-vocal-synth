@@ -95,6 +95,11 @@ export function EarPanel(props: { label: string }) {
   };
   const answer = (choice: "a" | "b" | "same") => {
     if (!q) return;
+    // the answered pair stops at once; the next question starts playing A when it arrives (above)
+    if (on.startsWith("q")) {
+      stopLoop();
+      setOn("q");
+    }
     void ear.answer(choice);
   };
 
@@ -147,6 +152,7 @@ export function EarPanel(props: { label: string }) {
             {ear.answers.length} answers
             {ear.model ? ` / a fit on the others predicts ${ear.agree.right} of ${ear.agree.of} decisive answers` : " / the model starts after 3 answers"}
             {` / ${ear.generations} search generations, ${ear.voices.length} voices tried`}
+            {q && ` / this pair differs by ${q.apart.toFixed(2)} SD per feature`}
           </p>
         </div>
       </Screen>

@@ -14,7 +14,7 @@
  * answered about are rendered again.
  */
 import { call } from "../wasm/chimera.ts";
-import { agreement, fit, matchLoudness, nextPair, objective, reach, reward, rng, SEARCH_WEIGHTS, type Model, type Pair, type SearchWeights } from "./preference.ts";
+import { agreement, fit, matchLoudness, nextPair, objective, reach, reward, rng, SEARCH_WEIGHTS, standardise, standardOf, type Model, type Pair, type SearchWeights } from "./preference.ts";
 import { Pool, unit, type CsdNote, type ProblemInfo, type SingerBody } from "./runner.ts";
 
 /** Genes the ear cannot judge here: loudness (playback matches it), timing, and what the
@@ -58,6 +58,8 @@ export interface Question {
   b: number;
   samples: [Float32Array, Float32Array];
   gains: [number, number];
+  /** how far apart the two voices' features are (standardised, root mean square per feature) */
+  apart: number;
 }
 
 export interface EarConfig {
@@ -243,7 +245,11 @@ export class EarRunner {
       this.model = null;
       return;
     }
-    const pool = this.voices.map((v) => v.f);
+    // standardise over the voices chosen to be heard (default, variations, answered) and every
+    // voice in a question, not the whole archive: the search fills the archive with near-copies of
+    // its best, which would shrink every spread and loosen the fit the longer the search ran
+    const heardIdx = new Set(this.pairs.flatMap((p) => [p.a, p.b]));
+    const pool = this.voices.flatMap((v, i) => (v.origin !== "search" || heardIdx.has(i) ? [v.f] : []));
     this.model = fit(pairs, pool, this.seed);
     this.agree = agreement(pairs, pool);
     const heard = this.heard();
@@ -293,7 +299,11 @@ export class EarRunner {
     const [pa, pb] = await Promise.all([pool.send<{ samples: number[] }>(0, { type: "render", x: this.voices[a].x }), pool.send<{ samples: number[] }>(1, { type: "render", x: this.voices[b].x })]);
     const samples: [Float32Array, Float32Array] = [Float32Array.from(pa.samples), Float32Array.from(pb.samples)];
     const g = matchLoudness(samples, 48000);
-    this.question = { a, b, samples, gains: [g[0], g[1]] };
+    const st = m ? m.standard : standardOf(cands.map((i) => this.voices[i].f));
+    const za = standardise(st, this.voices[a].f);
+    const zb = standardise(st, this.voices[b].f);
+    const apart = Math.sqrt(za.reduce((t, v, k) => t + (v - zb[k]) ** 2, 0) / za.length);
+    this.question = { a, b, samples, gains: [g[0], g[1]], apart };
     this.status = m ? "searching while you listen" : "listen, then answer";
     this.emit();
   }
