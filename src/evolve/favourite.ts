@@ -24,7 +24,7 @@ export function loadFavourite(): VoiceFavourite | null {
   try {
     const s = localStorage.getItem(KEY);
     const f = s ? (JSON.parse(s) as VoiceFavourite) : null;
-    return f && typeof f.genes === "object" && (f.body === "male" || f.body === "female") ? f : null;
+    return f && f.genes !== null && typeof f.genes === "object" && (f.body === "male" || f.body === "female") ? f : null;
   } catch {
     return null;
   }

@@ -115,10 +115,19 @@ export function rng(seed: number): () => number {
   };
 }
 
+/** The standard over `pool` (or the answered voices), and each pair's A minus B in it. */
+function differences(pairs: Pair[], pool: number[][]): { standard: Standard; dz: number[][] } {
+  const standard = standardOf(pool.length ? pool : pairs.flatMap((p) => [p.a, p.b]));
+  const dz = pairs.map((p) => {
+    const zb = standardise(standard, p.b);
+    return standardise(standard, p.a).map((v, i) => v - zb[i]);
+  });
+  return { standard, dz };
+}
+
 /** Fit the model to `pairs`, standardising over `pool` (the features of every voice in play). */
 export function fit(pairs: Pair[], pool: number[][], seed = 1, l2 = L2): Model {
-  const standard = standardOf(pool.length ? pool : pairs.flatMap((p) => [p.a, p.b]));
-  const dz = pairs.map((p) => standardise(standard, p.a).map((v, i) => v - standardise(standard, p.b)[i]));
+  const { standard, dz } = differences(pairs, pool);
   const y = pairs.map((p) => p.y);
   const w = fitWeights(dz, y, l2);
   const r = rng(seed);
@@ -153,8 +162,7 @@ export function edge(m: Model, a: number[], b: number[]): { mean: number; spread
  * predicts. The honest measure of whether the model has learned anything yet.
  */
 export function agreement(pairs: Pair[], pool: number[][], l2 = L2): { right: number; of: number } {
-  const standard = standardOf(pool.length ? pool : pairs.flatMap((p) => [p.a, p.b]));
-  const dz = pairs.map((p) => standardise(standard, p.a).map((v, i) => v - standardise(standard, p.b)[i]));
+  const { dz } = differences(pairs, pool);
   let right = 0;
   let of = 0;
   pairs.forEach((p, k) => {

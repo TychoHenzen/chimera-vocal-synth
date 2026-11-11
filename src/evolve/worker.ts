@@ -9,8 +9,14 @@ export type ToWorker = Job & { id: number };
 
 export type FromWorker = { type: "done"; id: number; result: unknown } | { type: "error"; id: number; error: string };
 
-self.onmessage = async (ev: MessageEvent<ToWorker>) => {
-  const m = ev.data;
+// onmessage does not wait for an async handler: chain the jobs so one that arrives while `init`
+// awaits the wasm runs after it, not against no problem
+let queue: Promise<void> = Promise.resolve();
+self.onmessage = (ev: MessageEvent<ToWorker>) => {
+  queue = queue.then(() => run(ev.data));
+};
+
+async function run(m: ToWorker): Promise<void> {
   try {
     let result: unknown;
     if (m.type === "init") {
@@ -23,4 +29,4 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
   } catch (e) {
     (self as unknown as Worker).postMessage({ type: "error", id: m.id, error: e instanceof Error ? e.message : String(e) } satisfies FromWorker);
   }
-};
+}

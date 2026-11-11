@@ -347,6 +347,8 @@ export class EvolveRunner {
     if (this.running) return;
     this.running = true;
     this.stopping = false;
+    // a sweep that was told to skip leaves this set, and generations() would run none
+    this.skipping = false;
     this.error = "";
     this.status = "starting the engines";
     this.label = cfg.label;

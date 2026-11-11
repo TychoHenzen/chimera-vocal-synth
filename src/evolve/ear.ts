@@ -169,8 +169,11 @@ export class EarRunner {
     this.pairs = [];
     this.asked.clear();
     this.model = null;
+    this.agree = { right: 0, of: 0 };
     this.question = this.favourite = null;
     this.generations = 0;
+    // evolveProblem below drops the main thread's optimiser: the search must start a new one
+    this.restart = true;
     this.status = "starting the engines";
     this.emit();
     const problem = { notes: cfg.notes, first: cfg.first, last: cfg.last, wav: Array.from(cfg.wav), rate: cfg.rate, wavT0: cfg.wavT0, body: cfg.body };
@@ -207,6 +210,8 @@ export class EarRunner {
         seeds.push({ x, origin: "variation" });
       }
       const feats = await this.features(pool, seeds.map((s) => s.x));
+      // archive index 0 is the default everywhere (the shortlist, renderFavourite)
+      if (!feats[0]) throw new Error("the default voice did not render");
       seeds.forEach((s, k) => feats[k] && this.voices.push({ x: s.x, f: feats[k]!, dist2: this.dist2(s.x), origin: s.origin, score: 0 }));
       // a voice that blew up drops out, so map seed positions to archive positions
       const at: number[] = [];
@@ -214,7 +219,8 @@ export class EarRunner {
       feats.forEach((f) => at.push(f ? v++ : -1));
       this.answers.forEach((a, k) => {
         const [ia, ib] = answered[k].map((s) => at[s]);
-        if (ia >= 0 && ib >= 0) this.pairs.push({ a: ia, b: ib, y: a.y });
+        if (ia < 0 || ib < 0) return;
+        this.pairs.push({ a: ia, b: ib, y: a.y });
         this.asked.add(pairKey(ia, ib));
       });
       this.refit();
@@ -254,6 +260,7 @@ export class EarRunner {
     // ASSUMPTION: three answers, one of them decisive, before a fit means anything; untuned.
     if (pairs.length < 3 || !pairs.some((p) => p.y !== 0.5)) {
       this.model = null;
+      this.agree = { right: 0, of: 0 };
       return;
     }
     // standardise over the voices chosen to be heard (default, variations, answered) and every

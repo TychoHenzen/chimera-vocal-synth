@@ -217,11 +217,9 @@ fn perturbation(x: &[f64], rate: f64, frames: &[Frame], hop: usize) -> (f64, f64
         s = out;
     }
     let f0_at = |i: usize| -> Option<f64> {
-        let idx = (i / hop).min(frames.len() - 1);
-        // the frame starting at idx*hop covers [idx*hop, idx*hop + FRAME_S]; use its centre
+        // the frame whose centre (its start plus half of FRAME_S) is nearest sample i
         let centre = ((i as f64 - 0.5 * FRAME_S * rate) / hop as f64).round().max(0.0) as usize;
         let f = &frames[centre.min(frames.len() - 1)];
-        let _ = idx;
         f.voiced.then_some(f.f0)
     };
     let (mut rap_sum, mut apq_sum, mut triples) = (0.0, 0.0, 0usize);
