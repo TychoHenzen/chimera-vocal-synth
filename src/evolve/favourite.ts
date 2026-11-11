@@ -4,7 +4,7 @@
  * (`crates/chimera/src/voice/profile.rs`); this module only stores them. No engine calls here:
  * the store imports it at startup.
  */
-import type { SingerBody } from "./runner.ts";
+import type { SingerBody } from "./types.ts";
 
 export interface VoiceFavourite {
   /** Evolve's genes by name (decoded values) */

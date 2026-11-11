@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { call } from "../../wasm/chimera.ts";
-import { EvolveRunner, cutClip, singerOf, sweepWindows, type CsdNote, type Gene, type SavedRun, type SingerBody } from "../../evolve/runner.ts";
+import { EvolveRunner } from "../../evolve/runner.ts";
+import { cutClip, singerOf, sweepWindows } from "../../evolve/sweep.ts";
+import type { CsdNote, Gene, SavedRun, SingerBody } from "../../evolve/types.ts";
 import { INK, drawGenes, drawNotes, drawSeries, drawSpectro, type NoteLook } from "../../evolve/charts.ts";
 import { EarPanel, ear } from "./EarPanel.tsx";
 import { Screen } from "./Screen.tsx";

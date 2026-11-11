@@ -5,257 +5,45 @@
  * generation are spread over a pool of workers, each with its own engine.
  */
 import { call } from "../wasm/chimera.ts";
-import type { FromWorker, Job, ToWorker } from "./worker.ts";
+import { Pool } from "./pool.ts";
+import { PER_NOTE, cutClip, deal, gather, sweepWindows, unit, windowConverged, windowGenomes } from "./sweep.ts";
+import type { Eval, GenRecord, Picture, ProblemInfo, RunConfig, SavedRun, SingerBody, Sweep, SweepConfig } from "./types.ts";
 
-export interface CsdNote {
-  start: number;
-  end: number;
-  midi: number;
-  csd: string;
-  syl: { phraseEnd: boolean; [k: string]: unknown };
-  phraseStart: boolean;
-  prevEnd: number | null;
+/** A note's genes as values (not 0..1). */
+export interface NoteValues {
+  shift: number;
+  dur: number;
+  cents: number;
+  vowel: string | null;
+  level: number;
 }
-export interface Gene {
-  name: string;
-  lo: number;
-  hi: number;
-  def: number;
-}
-export interface ProblemInfo {
-  genes: Gene[];
-  seconds: number;
-  clip0: number;
-  bands: number;
-  compNames: string[];
-  compWeights: number[];
-  /** what a note's vowel gene sings above 0.5 */
-  vowelChoices: string[];
-  /** genes before the per-note ones: the voice */
-  nGlobal: number;
-  /** what each of a render's ear features is (`chimera::analysis::ear`) */
-  featureNames: string[];
-}
-/** Genes per note, after the voice's: shift_s, dur_s, cents, vowel, level_db. */
-export const PER_NOTE = 5;
-export interface Eval {
-  loss: number;
-  comps: number[];
-  gap: number;
-}
-export interface GenRecord {
-  gen: number;
-  evals: number;
-  elapsed: number;
-  best: number;
-  genBest: number;
-  mean: number;
-  median: number;
-  worst: number;
-  sigma: number;
-  comps: number[];
-  gap: number;
-  /** the best genome so far, each gene 0..1 across its range (a sweep keeps only the voice's) */
-  x: number[];
-  /** a sweep's window of notes */
-  window?: number;
-}
-export interface Picture {
-  samples: number[];
-  sim: number[];
-  ref: number[];
-  vowels: (string | null)[];
-}
-/** Whose body the evolved voice starts from: the body genes centre on it. */
-export type SingerBody = "male" | "female";
-/**
- * The body a recording's singer most likely has, from its name: VocalSet names its singers m1-m11
- * and f1-f9 (`m2_row_vibrato`); CSD's one singer, and anything else, is taken as female.
- */
-export function singerOf(label: string): SingerBody {
-  return /^m\d+_/.test(label) ? "male" : "female";
-}
-export interface RunConfig {
-  notes: CsdNote[];
-  body: SingerBody;
-  first: number;
-  last: number;
-  /** 16-bit samples covering the clip, starting `wavT0` s into the song */
-  wav: Int16Array;
-  rate: number;
-  wavT0: number;
-  pop: number;
-  sigma: number;
-  seed: number;
-  workers: number;
-  resume?: SavedRun;
-  /** shown in saved files */
-  label: string;
-}
-export interface SweepConfig {
-  notes: CsdNote[];
-  body: SingerBody;
-  /** the whole song, mono */
-  samples: Float32Array;
-  rate: number;
-  /** notes per window, and how many of them the next window evolves again */
-  window: number;
-  overlap: number;
-  /**
-   * generations per window before it may move on, and the most it gets (the first window, which
-   * also finds the voice, gets twice both); between the two it moves on once `windowConverged`
-   */
-  gens: number;
+
+/** How long one call of `generations` runs, and what it counts on from. */
+interface GenerationsPlan {
   maxGens: number;
-  pop: number;
-  sigma: number;
-  seed: number;
-  workers: number;
-  label: string;
-}
-/** A sweep's progress: the windows of notes, and the genes each note has settled on. */
-export interface Sweep {
-  windows: [number, number][];
-  /** the window being evolved; windows.length once all are done */
-  index: number;
-  phase: "windows" | "full" | "done";
-  /** the voice (the first nGlobal genes, 0..1) as it stands */
-  voice: number[];
-  /** each note's genes (PER_NOTE, 0..1) once a window has evolved it */
-  noteX: (number[] | null)[];
-  /** the generation each window started at */
-  marks: number[];
-  /** the whole section, sung with the assembled genome, and with the default voice */
-  full: { picture: Picture; eval: Eval; defaultPicture: Picture; defaultEval: Eval; clip0: number; seconds: number } | null;
+  evals0: number;
+  elapsed0: number;
+  /** the part of the best genome a generation record keeps */
+  keep: (x: number[]) => number[];
+  /** a sweep's window (its records count generations across windows) */
+  window?: number;
+  /** generations before `windowConverged` may end the window */
+  minGens?: number;
 }
 
-/** The recording around notes first..last as 16-bit samples (with margin for the engine's clip). */
-export function cutClip(samples: Float32Array, rate: number, notes: CsdNote[], first: number, last: number): { wav: Int16Array; wavT0: number } {
-  const clip0 = Math.max(0, notes[first].start - 0.4);
-  const clip1 = notes[last].end + 0.5;
-  const t0 = Math.max(0, clip0 - 0.1);
-  const t1 = clip1 + 0.1;
-  const a = Math.floor(t0 * rate);
-  const b = Math.min(samples.length, Math.ceil(t1 * rate));
-  const wav = new Int16Array(Math.max(0, b - a));
-  for (let i = 0; i < wav.length; i++) wav[i] = Math.max(-32768, Math.min(32767, Math.round(samples[a + i] * 32767)));
-  return { wav, wavT0: t0 };
-}
-
-/** Windows of `size` notes, each starting `size - overlap` notes after the last, covering all n. */
-export function sweepWindows(n: number, size: number, overlap: number): [number, number][] {
-  const w = Math.max(1, Math.min(size, n));
-  const step = Math.max(1, w - Math.max(0, Math.min(overlap, w - 1)));
-  const out: [number, number][] = [];
-  for (let a = 0; ; a += step) {
-    const b = Math.min(n - 1, a + w - 1);
-    out.push([Math.max(0, b - w + 1), b]);
-    if (b >= n - 1) break;
-  }
-  return out;
-}
-
-/** A gene's default as a genome value (0..1 across its range). */
-export const unit = (g: Gene) => (g.def - g.lo) / (g.hi - g.lo);
-
-/**
- * A sweep window's genomes. `start` is where the window's search begins: the voice evolved so far
- * (`voice`, empty before the first window) and each note's carried genes. `untouched` is every
- * gene at its default, which is what "Hear default voice" plays. Playing `start` there played the
- * previous windows' evolved voice under the default's name.
- */
-export function windowGenomes(genes: Gene[], nGlobal: number, voice: number[], noteX: (number[] | null)[], first: number, last: number, index: number): { start: number[]; scales: number[]; untouched: number[] } {
-  const untouched = genes.map(unit);
-  const start = voice.length ? voice.slice() : untouched.slice(0, nGlobal);
-  // ASSUMPTION: after the first window the voice only needs fine steps (0.35 of the new
-  // notes'), and notes carried from the last window half steps; untuned guesses.
-  const scales = new Array<number>(nGlobal).fill(index === 0 ? 1 : 0.35);
-  for (let k = first; k <= last; k++) {
-    const carried = noteX[k];
-    const b = nGlobal + (k - first) * PER_NOTE;
-    start.push(...(carried ?? untouched.slice(b, b + PER_NOTE)));
-    scales.push(...new Array<number>(PER_NOTE).fill(carried ? 0.5 : 1));
-  }
-  return { start, scales, untouched };
-}
-
-/** Generations over which a window's best must still be improving. */
-export const PLATEAU_GENS = 20;
-/**
- * Whether a window's run (its generation records, oldest first) has settled: over the last
- * PLATEAU_GENS generations the best loss fell by under 0.5 %, and the generation's median candidate
- * is within 2 % of its best, so the population has closed in on one voice. A fixed generation
- * count moved on while the best was still falling and the population was still spread wide.
- * ASSUMPTION: 0.5 % and 2 % are guesses, not tuned against runs.
- */
-export function windowConverged(h: GenRecord[]): boolean {
-  if (h.length <= PLATEAU_GENS) return false;
-  const now = h[h.length - 1];
-  const then = h[h.length - 1 - PLATEAU_GENS];
-  const gain = (then.best - now.best) / then.best;
-  const spread = (now.median - now.genBest) / now.genBest;
-  return gain < 0.005 && spread < 0.02;
-}
-
-export interface SavedRun {
-  version: 1;
-  label: string;
-  first: number;
-  last: number;
-  /** absent in runs saved before the body was chosen: those were female */
-  body?: SingerBody;
-  cma: unknown;
-  bestX: number[];
-  best: Eval;
-  history: GenRecord[];
+/** Running totals carried from one sweep window to the next. */
+interface Totals {
   evals: number;
   elapsed: number;
 }
 
-/** Workers, each with its own engine; jobs sent to one worker run in order. */
-export class Pool {
-  private workers: Worker[] = [];
-  private pending = new Map<number, { ok: (v: unknown) => void; fail: (e: Error) => void }>();
-  private next = 1;
-
-  constructor(n: number) {
-    for (let i = 0; i < n; i++) {
-      const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
-      w.onmessage = (ev: MessageEvent<FromWorker>) => {
-        const p = this.pending.get(ev.data.id);
-        if (!p) return;
-        this.pending.delete(ev.data.id);
-        if (ev.data.type === "done") p.ok(ev.data.result);
-        else p.fail(new Error(ev.data.error));
-      };
-      w.onerror = (ev) => {
-        // a worker that dies takes its jobs with it
-        for (const p of this.pending.values()) p.fail(new Error(ev.message || "worker failed"));
-        this.pending.clear();
-      };
-      this.workers.push(w);
-    }
-  }
-
-  get size(): number {
-    return this.workers.length;
-  }
-
-  send<T>(i: number, m: Job): Promise<T> {
-    const id = this.next++;
-    return new Promise<T>((ok, fail) => {
-      this.pending.set(id, { ok: ok as (v: unknown) => void, fail });
-      this.workers[i].postMessage({ ...m, id } as ToWorker);
-    });
-  }
-
-  close(): void {
-    for (const w of this.workers) w.terminate();
-    this.workers = [];
-    for (const p of this.pending.values()) p.fail(new Error("stopped"));
-    this.pending.clear();
-  }
+/** The engine's problem for notes first..last of a sweep's song. */
+function windowProblem(cfg: SweepConfig, first: number, last: number) {
+  const { wav, wavT0 } = cutClip(cfg.samples, cfg.rate, cfg.notes, first, last);
+  return { notes: cfg.notes, first, last, wav: Array.from(wav), rate: cfg.rate, wavT0, body: cfg.body };
 }
+
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export class EvolveRunner {
   info: ProblemInfo | null = null;
@@ -303,22 +91,28 @@ export class EvolveRunner {
     this.emit();
   }
 
-  /** A note's genes as values (not 0..1), live for the window being evolved; null if not reached. */
-  noteValues(k: number): { shift: number; dur: number; cents: number; vowel: string | null; level: number } | null {
+  /** A note's genes as values, live for the window being evolved; null if not reached. */
+  noteValues(k: number): NoteValues | null {
     const sw = this.sweep;
     const info = this.info;
     if (!sw || !info) return null;
-    const win = sw.windows[sw.index];
-    let u: number[] | null = sw.noteX[k];
-    if (sw.phase === "windows" && win && k >= win[0] && k <= win[1] && this.bestX.length) {
-      const b = info.nGlobal + (k - win[0]) * PER_NOTE;
-      u = this.bestX.slice(b, b + PER_NOTE);
-    }
+    const u = this.noteGenome(sw, info.nGlobal, k);
     if (!u) return null;
     const g = info.genes.slice(info.nGlobal, info.nGlobal + PER_NOTE);
     const v = u.map((x, i) => g[i].lo + Math.min(1, Math.max(0, x)) * (g[i].hi - g[i].lo));
     const ch = info.vowelChoices;
-    return { shift: v[0], dur: v[1], cents: v[2], vowel: v[3] >= 0.5 ? ch[Math.min(ch.length - 1, Math.floor((v[3] - 0.5) * 2 * ch.length))] : null, level: v[4] };
+    const vowel = v[3] >= 0.5 ? ch[Math.min(ch.length - 1, Math.floor((v[3] - 0.5) * 2 * ch.length))] : null;
+    return { shift: v[0], dur: v[1], cents: v[2], vowel, level: v[4] };
+  }
+
+  /** Note k's genes (0..1): the live best while its window evolves, else what the sweep settled. */
+  private noteGenome(sw: Sweep, nGlobal: number, k: number): number[] | null {
+    const win = sw.windows[sw.index];
+    if (sw.phase === "windows" && win && k >= win[0] && k <= win[1] && this.bestX.length) {
+      const b = nGlobal + (k - win[0]) * PER_NOTE;
+      return this.bestX.slice(b, b + PER_NOTE);
+    }
+    return sw.noteX[k];
   }
 
   /** Render a genome in a worker (the pool outlives a stopped run only until it finishes). */
@@ -343,23 +137,32 @@ export class EvolveRunner {
     };
   }
 
-  async start(cfg: RunConfig): Promise<void> {
-    if (this.running) return;
+  /** The state every run starts from (a sweep that was told to skip leaves `skipping` set). */
+  private begin(label: string, body: SingerBody, range: [number, number]): void {
     this.running = true;
     this.stopping = false;
-    // a sweep that was told to skip leaves this set, and generations() would run none
     this.skipping = false;
     this.error = "";
     this.status = "starting the engines";
-    this.label = cfg.label;
-    this.body = cfg.body;
-    this.range = [cfg.first, cfg.last];
+    this.label = label;
+    this.body = body;
+    this.range = range;
+  }
+
+  /** Record a run's failure, unless it was stopped (a stop rejects the pool's pending jobs). */
+  private fail(e: unknown): void {
+    if (!this.stopping) this.error = message(e);
+  }
+
+  async start(cfg: RunConfig): Promise<void> {
+    if (this.running) return;
+    this.begin(cfg.label, cfg.body, [cfg.first, cfg.last]);
     this.sweep = null;
     this.emit();
     try {
       await this.run(cfg);
     } catch (e) {
-      if (!this.stopping) this.error = e instanceof Error ? e.message : String(e);
+      this.fail(e);
     } finally {
       this.pool?.close();
       this.pool = null;
@@ -376,63 +179,23 @@ export class EvolveRunner {
    */
   async startSweep(cfg: SweepConfig): Promise<void> {
     if (this.running) return;
-    this.running = true;
-    this.stopping = false;
-    this.skipping = false;
-    this.error = "";
-    this.label = cfg.label;
-    this.body = cfg.body;
+    this.begin(cfg.label, cfg.body, [0, cfg.notes.length - 1]);
     this.history = [];
     this.picture = this.defaultPicture = null;
-    this.status = "starting the engines";
     const windows = sweepWindows(cfg.notes.length, cfg.window, cfg.overlap);
-    this.range = [0, cfg.notes.length - 1];
-    const sw: Sweep = { windows, index: 0, phase: "windows", voice: [], noteX: cfg.notes.map(() => null), marks: [], full: null };
+    const noteX = cfg.notes.map(() => null);
+    const sw: Sweep = { windows, index: 0, phase: "windows", voice: [], noteX, marks: [], full: null };
     this.sweep = sw;
     this.emit();
-    const n = Math.max(1, Math.min(cfg.workers, cfg.pop));
-    const pool = (this.pool = new Pool(n));
+    const pool = (this.pool = new Pool(Math.max(1, Math.min(cfg.workers, cfg.pop))));
     try {
-      let evals = 0;
-      let elapsed = 0;
+      let totals: Totals = { evals: 0, elapsed: 0 };
       for (; sw.index < windows.length && !this.stopping && !this.skipping; sw.index++) {
-        const [first, last] = windows[sw.index];
-        const { wav, wavT0 } = cutClip(cfg.samples, cfg.rate, cfg.notes, first, last);
-        const problem = { notes: cfg.notes, first, last, wav: Array.from(wav), rate: cfg.rate, wavT0, body: cfg.body };
-        const info = call<ProblemInfo>("evolveProblem", problem);
-        const ng = info.nGlobal;
-        const { start, scales, untouched } = windowGenomes(info.genes, ng, sw.voice, sw.noteX, first, last, sw.index);
-        call("evolveStart", { sigma: cfg.sigma, pop: cfg.pop, seed: cfg.seed + sw.index, start, scales });
-        this.info = info;
-        this.startX = start;
-        sw.marks.push(this.history.length);
-        this.status = `window ${sw.index + 1} of ${windows.length}: notes ${first}-${last}`;
-        this.emit();
-        await Promise.all(Array.from({ length: n }, (_, i) => pool.send(i, { type: "init", problem })));
-        const [e] = await pool.send<Eval[]>(0, { type: "eval", xs: [start] });
-        this.best = e;
-        this.bestX = start.slice();
-        pool
-          .send<Picture>(0, { type: "render", x: untouched })
-          .then((p) => {
-            this.defaultPicture = p;
-            this.emit();
-          })
-          .catch(() => {});
-        const twice = sw.index === 0 ? 2 : 1;
-        const r = await this.generations(pool, n, cfg.maxGens * twice, evals + 1, elapsed, (x) => x.slice(0, ng), sw.index, cfg.gens * twice);
-        evals = r.evals;
-        elapsed = r.elapsed;
-        sw.voice = this.bestX.slice(0, ng);
-        for (let k = first; k <= last; k++) {
-          const b = ng + (k - first) * PER_NOTE;
-          sw.noteX[k] = this.bestX.slice(b, b + PER_NOTE);
-        }
-        this.emit();
+        totals = await this.evolveWindow(cfg, pool, sw, totals);
       }
-      if (!this.stopping) await this.singFull(cfg, pool, n);
+      if (!this.stopping) await this.singFull(cfg, pool);
     } catch (e) {
-      if (!this.stopping) this.error = e instanceof Error ? e.message : String(e);
+      this.fail(e);
     } finally {
       pool.close();
       this.pool = null;
@@ -442,15 +205,62 @@ export class EvolveRunner {
     }
   }
 
+  /** Evolve the sweep's current window, then keep its voice and its notes' genes. */
+  private async evolveWindow(cfg: SweepConfig, pool: Pool, sw: Sweep, totals: Totals): Promise<Totals> {
+    const [first, last] = sw.windows[sw.index];
+    const problem = windowProblem(cfg, first, last);
+    const info = call<ProblemInfo>("evolveProblem", problem);
+    const ng = info.nGlobal;
+    const at = { nGlobal: ng, voice: sw.voice, noteX: sw.noteX, first, last, index: sw.index };
+    const { start, scales, untouched } = windowGenomes(info.genes, at);
+    call("evolveStart", { sigma: cfg.sigma, pop: cfg.pop, seed: cfg.seed + sw.index, start, scales });
+    this.info = info;
+    this.startX = start;
+    sw.marks.push(this.history.length);
+    this.status = `window ${sw.index + 1} of ${sw.windows.length}: notes ${first}-${last}`;
+    this.emit();
+    await pool.all(pool.size, { type: "init", problem });
+    const [e] = await pool.send<Eval[]>(0, { type: "eval", xs: [start] });
+    this.best = e;
+    this.bestX = start.slice();
+    this.showDefault(pool, untouched);
+    const twice = sw.index === 0 ? 2 : 1;
+    const r = await this.generations(pool, {
+      maxGens: cfg.maxGens * twice,
+      evals0: totals.evals + 1,
+      elapsed0: totals.elapsed,
+      keep: (x) => x.slice(0, ng),
+      window: sw.index,
+      minGens: cfg.gens * twice,
+    });
+    sw.voice = this.bestX.slice(0, ng);
+    for (let k = first; k <= last; k++) {
+      const b = ng + (k - first) * PER_NOTE;
+      sw.noteX[k] = this.bestX.slice(b, b + PER_NOTE);
+    }
+    this.emit();
+    return r;
+  }
+
+  /** Render the default voice in the background for "Hear default voice". */
+  private showDefault(pool: Pool, x: number[]): void {
+    pool
+      .send<Picture>(0, { type: "render", x })
+      .then((p) => {
+        this.defaultPicture = p;
+        this.emit();
+      })
+      .catch(() => {});
+  }
+
   /** Sing the whole section with the sweep's genes (notes no window reached keep the defaults). */
-  private async singFull(cfg: SweepConfig, pool: Pool, n: number): Promise<void> {
+  private async singFull(cfg: SweepConfig, pool: Pool): Promise<void> {
     const sw = this.sweep!;
     sw.phase = "full";
     const last = cfg.notes.length - 1;
     this.status = "singing the whole section";
     this.emit();
-    const { wav, wavT0 } = cutClip(cfg.samples, cfg.rate, cfg.notes, 0, last);
-    const problem = { notes: cfg.notes, first: 0, last, wav: Array.from(wav), rate: cfg.rate, wavT0, body: cfg.body };
+    const problem = windowProblem(cfg, 0, last);
     const info = call<ProblemInfo>("evolveProblem", problem);
     const def = info.genes.map(unit);
     const x = sw.voice.length ? sw.voice.slice() : def.slice(0, info.nGlobal);
@@ -458,8 +268,8 @@ export class EvolveRunner {
       const b = info.nGlobal + k * PER_NOTE;
       x.push(...(sw.noteX[k] ?? def.slice(b, b + PER_NOTE)));
     }
-    const m = Math.min(n, 2);
-    await Promise.all(Array.from({ length: m }, (_, i) => pool.send(i, { type: "init", problem })));
+    const m = Math.min(pool.size, 2);
+    await pool.all(m, { type: "init", problem });
     // the assembled voice and the default one, side by side on two workers
     const [picture, defaultPicture, [e], [de]] = await Promise.all([
       pool.send<Picture>(0, { type: "render", x }),
@@ -472,16 +282,17 @@ export class EvolveRunner {
   }
 
   private async run(cfg: RunConfig): Promise<void> {
-    const problem = { notes: cfg.notes, first: cfg.first, last: cfg.last, wav: Array.from(cfg.wav), rate: cfg.rate, wavT0: cfg.wavT0, body: cfg.body };
+    const { notes, first, last, rate, wavT0, body } = cfg;
+    const problem = { notes, first, last, wav: Array.from(cfg.wav), rate, wavT0, body };
     // the main thread's engine only holds the optimiser; the workers hold the recording
     const info = call<ProblemInfo>("evolveProblem", problem);
     const resume = cfg.resume;
-    const started = call<{ start: number[] }>("evolveStart", { sigma: cfg.sigma, pop: cfg.pop, seed: cfg.seed, state: resume?.cma ?? null });
+    const state = resume?.cma ?? null;
+    const started = call<{ start: number[] }>("evolveStart", { sigma: cfg.sigma, pop: cfg.pop, seed: cfg.seed, state });
     this.info = info;
     this.startX = started.start;
-    const n = Math.max(1, Math.min(cfg.workers, cfg.pop));
-    const pool = (this.pool = new Pool(n));
-    await Promise.all(Array.from({ length: n }, (_, i) => pool.send(i, { type: "init", problem })));
+    const pool = (this.pool = new Pool(Math.max(1, Math.min(cfg.workers, cfg.pop))));
+    await pool.all(pool.size, { type: "init", problem });
 
     if (resume) {
       this.history = resume.history;
@@ -497,28 +308,18 @@ export class EvolveRunner {
       this.bestX = this.startX.slice();
       this.evals = 1;
     }
-    pool
-      .send<Picture>(0, { type: "render", x: this.startX })
-      .then((p) => {
-        this.defaultPicture = p;
-        this.emit();
-      })
-      .catch(() => {});
+    this.showDefault(pool, this.startX);
     const elapsed0 = resume ? (this.history[this.history.length - 1]?.elapsed ?? 0) : 0;
-    await this.generations(pool, n, Infinity, this.evals, elapsed0, (x) => x);
+    await this.generations(pool, { maxGens: Infinity, evals0: this.evals, elapsed0, keep: (x) => x });
   }
 
   /**
-   * Ask, score in the pool, tell, until stopped (or after `maxGens` generations, or a sweep's
-   * skip, or once a sweep's window has had `minGens` and `windowConverged`), keeping the best and
-   * a record per generation; returns the running totals.
+   * A picture of the best voice so far, at most every 20 s unless forced (each render costs a
+   * worker the time of a whole candidate).
    */
-  private async generations(pool: Pool, n: number, maxGens: number, evals0: number, elapsed0: number, keep: (x: number[]) => number[], window?: number, minGens = Infinity): Promise<{ evals: number; elapsed: number }> {
-    this.evals = evals0;
-    const first = this.history.length;
-    const t0 = performance.now();
+  private pictureRequester(pool: Pool): (force: boolean) => void {
     let lastPicture = -1e9;
-    const requestPicture = (force: boolean) => {
+    return (force) => {
       const now = performance.now();
       if (!force && now - lastPicture < 20000) return;
       lastPicture = now;
@@ -532,17 +333,33 @@ export class EvolveRunner {
         })
         .catch(() => {});
     };
+  }
+
+  /** Score a generation's candidates across the pool, in candidate order. */
+  private async score(pool: Pool, xs: number[][]): Promise<Eval[]> {
+    const hands = deal(xs, pool.size);
+    const parts = await Promise.all(
+      hands.map((c, i) => (c.length ? pool.send<Eval[]>(i, { type: "eval", xs: c }) : Promise.resolve([] as Eval[]))),
+    );
+    return gather(parts, xs.length);
+  }
+
+  /**
+   * Ask, score in the pool, tell, until stopped (or after `maxGens` generations, or a sweep's
+   * skip, or once a sweep's window has had `minGens` and `windowConverged`), keeping the best and
+   * a record per generation; returns the running totals.
+   */
+  private async generations(pool: Pool, plan: GenerationsPlan): Promise<Totals> {
+    const { maxGens, elapsed0, keep, window, minGens = Infinity } = plan;
+    this.evals = plan.evals0;
+    const first = this.history.length;
+    const t0 = performance.now();
+    const requestPicture = this.pictureRequester(pool);
     requestPicture(true);
     for (let g = 0; g < maxGens && !this.stopping && !this.skipping; g++) {
       if (window === undefined) this.status = "evolving";
       const xs = call<number[][]>("evolveAsk");
-      const chunks: number[][][] = Array.from({ length: n }, () => []);
-      xs.forEach((x, i) => chunks[i % n].push(x));
-      const parts = await Promise.all(chunks.map((c, i) => (c.length ? pool.send<Eval[]>(i, { type: "eval", xs: c }) : Promise.resolve([] as Eval[]))));
-      // put the scores back in candidate order
-      const evs: Eval[] = new Array(xs.length);
-      const at = new Array(n).fill(0);
-      xs.forEach((_, i) => (evs[i] = parts[i % n][at[i % n]++]));
+      const evs = await this.score(pool, xs);
       this.evals += xs.length;
       const losses = evs.map((e) => e.loss);
       let bi = 0;
@@ -555,23 +372,7 @@ export class EvolveRunner {
         this.bestX = xs[bi].slice();
       }
       const told = call<{ generation: number; sigma: number }>("evolveTell", { losses });
-      const sorted = losses.slice().sort((a, b) => a - b);
-      this.history.push({
-        // a sweep restarts the optimiser each window: count its generations across them
-        gen: window === undefined ? told.generation : this.history.length + 1,
-        evals: this.evals,
-        elapsed: elapsed0 + (performance.now() - t0) / 1000,
-        best: this.best!.loss,
-        genBest: sorted[0],
-        mean: losses.reduce((a, b) => a + b, 0) / losses.length,
-        median: sorted[sorted.length >> 1],
-        worst: sorted[sorted.length - 1],
-        sigma: told.sigma,
-        comps: this.best!.comps,
-        gap: this.best!.gap,
-        x: keep(this.bestX).map((v) => Math.round(v * 1000) / 1000),
-        window,
-      });
+      this.history.push(this.record(losses, told, elapsed0 + (performance.now() - t0) / 1000, keep, window));
       if (improved) requestPicture(false);
       this.emit();
       if (g + 1 >= minGens && windowConverged(this.history.slice(first))) break;
@@ -580,5 +381,32 @@ export class EvolveRunner {
     // let the last picture arrive before the window (or the run) moves on
     await pool.send(0, { type: "eval", xs: [] }).catch(() => {});
     return { evals: this.evals, elapsed: elapsed0 + (performance.now() - t0) / 1000 };
+  }
+
+  /** One generation's record, from its losses and what the optimiser said after them. */
+  private record(
+    losses: number[],
+    told: { generation: number; sigma: number },
+    elapsed: number,
+    keep: (x: number[]) => number[],
+    window: number | undefined,
+  ): GenRecord {
+    const sorted = losses.slice().sort((a, b) => a - b);
+    return {
+      // a sweep restarts the optimiser each window: count its generations across them
+      gen: window === undefined ? told.generation : this.history.length + 1,
+      evals: this.evals,
+      elapsed,
+      best: this.best!.loss,
+      genBest: sorted[0],
+      mean: losses.reduce((a, b) => a + b, 0) / losses.length,
+      median: sorted[sorted.length >> 1],
+      worst: sorted[sorted.length - 1],
+      sigma: told.sigma,
+      comps: this.best!.comps,
+      gap: this.best!.gap,
+      x: keep(this.bestX).map((v) => Math.round(v * 1000) / 1000),
+      window,
+    };
   }
 }

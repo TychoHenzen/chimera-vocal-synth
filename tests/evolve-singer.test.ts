@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { initEngine } from "./harness.ts";
 
 await initEngine();
-const { singerOf } = await import("../src/evolve/runner.ts");
+const { singerOf } = await import("../src/evolve/sweep.ts");
 
 describe("singerOf", () => {
   test("VocalSet's m singers are male; its f singers, CSD and unknown names female", () => {

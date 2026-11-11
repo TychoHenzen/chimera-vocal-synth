@@ -1,5 +1,5 @@
 /** Canvas drawing for the Evolve mode: line charts, the gene map and the spectrogram strips. */
-import type { GenRecord } from "./runner.ts";
+import type { GenRecord } from "./types.ts";
 
 export const INK = { blue: "#4fb6f2", amber: "#ffb340", green: "#5be381", red: "#ff5d40", pink: "#ff73cf", white: "#eef6f8", dim: "#3487c4", grid: "#133954" };
 

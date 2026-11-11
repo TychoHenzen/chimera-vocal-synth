@@ -1,6 +1,6 @@
 /**
  * One evolution worker: its own copy of the engine, holding the recording and notes, scoring
- * the candidate voices it is sent. Messages run one at a time, in order (see runner.ts).
+ * the candidate voices it is sent. Messages run one at a time, in order (see pool.ts).
  */
 import { call, initChimera } from "../wasm/chimera.ts";
 

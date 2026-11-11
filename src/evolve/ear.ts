@@ -15,7 +15,9 @@
  */
 import { call } from "../wasm/chimera.ts";
 import { agreement, fit, matchLoudness, nextPair, objective, reach, reward, rng, SEARCH_WEIGHTS, standardise, standardOf, type Model, type Pair, type SearchWeights } from "./preference.ts";
-import { Pool, unit, type CsdNote, type ProblemInfo, type SingerBody } from "./runner.ts";
+import { Pool } from "./pool.ts";
+import { unit } from "./sweep.ts";
+import type { CsdNote, ProblemInfo, SingerBody } from "./types.ts";
 
 /**
  * Genes the search leaves at the default. Some the ear cannot judge here: loudness (playback

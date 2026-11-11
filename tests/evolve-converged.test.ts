@@ -4,10 +4,10 @@
  */
 import { describe, expect, test } from "bun:test";
 import { initEngine } from "./harness.ts";
-import type { GenRecord } from "../src/evolve/runner.ts";
+import type { GenRecord } from "../src/evolve/types.ts";
 
 await initEngine();
-const { windowConverged, PLATEAU_GENS } = await import("../src/evolve/runner.ts");
+const { windowConverged, PLATEAU_GENS } = await import("../src/evolve/sweep.ts");
 
 /** n generations whose best falls by `drop` per generation, with the median `spread` above it. */
 function run(n: number, drop: number, spread: number): GenRecord[] {
