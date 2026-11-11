@@ -40,6 +40,7 @@ pub mod analysis {
     pub mod fft;
     pub mod lpc;
     pub mod pitch;
+    pub mod ear;
     pub mod quality;
 }
 

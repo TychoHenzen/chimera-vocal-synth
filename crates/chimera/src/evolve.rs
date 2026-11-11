@@ -668,6 +668,17 @@ impl Problem {
         self.score(&self.render(x))
     }
 
+    /// What the listener-preference model learns from (`analysis::ear`); `None` when the render
+    /// blew up.
+    pub fn features(&self, x: &[f64]) -> Option<[f64; crate::analysis::ear::N_FEATURES]> {
+        let out: Vec<f64> = self.render(x).iter().map(|&s| s as f64).collect();
+        if out.iter().any(|s| !s.is_finite()) {
+            return None;
+        }
+        let f = crate::analysis::ear::features(&out, FS);
+        f.iter().all(|v| v.is_finite()).then_some(f)
+    }
+
     fn score(&self, out: &[f32]) -> Eval {
         let xs: Vec<f64> = out.iter().map(|&s| s as f64).collect();
         if xs.iter().any(|s| !s.is_finite()) {

@@ -164,7 +164,7 @@ fn dispatch(st: &mut State, req: &Value) -> Res {
             // `body`: the singer's ("male" | "female" | "child"); the body genes centre on it
             let body: chimera::anatomy::human::BodyName = arg(req, "body")?;
             let p = chimera::evolve::Problem::new(&notes, arg(req, "first")?, arg(req, "last")?, &wav, arg(req, "rate")?, arg(req, "wavT0")?, body)?;
-            let out = json!({ "genes": p.spec.genes, "seconds": p.seconds, "clip0": p.clip0, "bands": chimera::evolve::BANDS, "compNames": chimera::evolve::COMP_NAMES, "compWeights": chimera::evolve::COMP_WEIGHTS, "vowelChoices": chimera::evolve::VOWEL_CHOICES, "nGlobal": chimera::evolve::Spec::n_global() });
+            let out = json!({ "genes": p.spec.genes, "seconds": p.seconds, "clip0": p.clip0, "bands": chimera::evolve::BANDS, "compNames": chimera::evolve::COMP_NAMES, "compWeights": chimera::evolve::COMP_WEIGHTS, "vowelChoices": chimera::evolve::VOWEL_CHOICES, "nGlobal": chimera::evolve::Spec::n_global(), "featureNames": chimera::analysis::ear::FEATURE_NAMES });
             st.evo_problem = Some(p);
             st.evo_cma = None;
             Ok(out)
@@ -173,6 +173,12 @@ fn dispatch(st: &mut State, req: &Value) -> Res {
             let p = st.evo_problem.as_ref().ok_or("no evolve problem (evolveProblem first)")?;
             let xs: Vec<Vec<f64>> = arg(req, "xs")?;
             to_json(&xs.iter().map(|x| p.evaluate(x)).collect::<Vec<_>>())
+        }
+        "evolveFeatures" => {
+            // per genome, the render's ear features (null when it blew up)
+            let p = st.evo_problem.as_ref().ok_or("no evolve problem (evolveProblem first)")?;
+            let xs: Vec<Vec<f64>> = arg(req, "xs")?;
+            to_json(&xs.iter().map(|x| p.features(x)).collect::<Vec<_>>())
         }
         "evolveRender" => {
             let p = st.evo_problem.as_ref().ok_or("no evolve problem (evolveProblem first)")?;
