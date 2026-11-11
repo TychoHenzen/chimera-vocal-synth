@@ -15,7 +15,6 @@ export const norm = (a: Vec): Vec => {
   const l = Math.hypot(a.x, a.y) || 1;
   return { x: a.x / l, y: a.y / l };
 };
-export const lerpV = (a: Vec, b: Vec, t: number): Vec => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
 export const polar = (c: Vec, r: number, ang: number): Vec => ({ x: c.x + r * Math.cos(ang), y: c.y + r * Math.sin(ang) });
 export const rotateAbout = (p: Vec, c: Vec, ang: number): Vec => {
   const s = Math.sin(ang), co = Math.cos(ang);
@@ -54,56 +53,6 @@ export class Polyline {
     this.xs.length = 0;
     this.ys.length = 0;
   }
-}
-
-/**
- * All intersections of the ray o + t·d (t in [tMin, tMax]) with a polyline.
- * Writes parameters t into `out` and returns their count.
- */
-export function rayPolyline(ox: number, oy: number, dx: number, dy: number, pl: Polyline, tMin: number, tMax: number, out: number[]): number {
-  let n = 0;
-  const xs = pl.xs, ys = pl.ys;
-  for (let i = 0; i < xs.length - 1; i++) {
-    const t = crossingT(ox, oy, dx, dy, xs[i], ys[i], xs[i + 1], ys[i + 1]);
-    if (t >= tMin && t <= tMax && n < out.length) out[n++] = t;
-  }
-  return n;
-}
-
-/**
- * Where segment A→B crosses the line through o along d (as t along d), or NaN. A segment
- * crosses only if its ends lie on different sides of the line, a point on the line counting as
- * the positive side: a polyline passing through a vertex then crosses once, and one that only
- * touches the line at a vertex crosses twice at the same t or not at all (a half-open rule on
- * the segment parameter kept one crossing of such a touch, an unmatched entry or exit).
- */
-function crossingT(ox: number, oy: number, dx: number, dy: number, ax: number, ay: number, bx: number, by: number): number {
-  const sa = dx * (ay - oy) - dy * (ax - ox) >= 0;
-  const sb = dx * (by - oy) - dy * (bx - ox) >= 0;
-  if (sa === sb) return NaN;
-  const ex = bx - ax, ey = by - ay;
-  const den = dx * ey - dy * ex;
-  if (Math.abs(den) < 1e-15) return NaN;
-  return ((ax - ox) * ey - (ay - oy) * ex) / den;
-}
-
-/**
- * Like rayPolyline, also telling for each crossing whether the ray leaves the tissue (the
- * polyline's right-hand side, along its direction) for the air: `exit[i]` is 1 then, else 0.
- */
-export function rayCrossings(ox: number, oy: number, dx: number, dy: number, pl: Polyline, tMin: number, tMax: number, outT: number[], exit: Uint8Array): number {
-  let n = 0;
-  const xs = pl.xs, ys = pl.ys;
-  for (let i = 0; i < xs.length - 1; i++) {
-    const t = crossingT(ox, oy, dx, dy, xs[i], ys[i], xs[i + 1], ys[i + 1]);
-    if (t >= tMin && t <= tMax && n < outT.length) {
-      outT[n] = t;
-      // leaving the tissue (on the polyline's right) for the air: the ray turns left across it
-      exit[n] = dx * (ys[i + 1] - ys[i]) - dy * (xs[i + 1] - xs[i]) < 0 ? 1 : 0;
-      n++;
-    }
-  }
-  return n;
 }
 
 /** Sample a cubic Bézier into `count` points (including both ends). */
@@ -153,13 +102,4 @@ export function catmullRom(pts: Vec[], per: number): Vec[] {
   }
   out.push(pts[pts.length - 1]);
   return out;
-}
-
-/** Upper tangent point from external point p to circle (c, r): returns angle on the circle. */
-export function tangentAngle(c: Vec, r: number, p: Vec, upper: boolean): number | null {
-  const d = dist(c, p);
-  if (d <= r * 1.0001) return null;
-  const base = Math.atan2(p.y - c.y, p.x - c.x);
-  const off = Math.acos(r / d);
-  return upper ? base + off : base - off;
 }

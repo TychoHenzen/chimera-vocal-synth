@@ -288,7 +288,6 @@ pub struct AirwayNetwork {
     wall_v: Vec<f64>,
     /// per-node wall volume velocity (telemetry)
     pub wall_u: Vec<f64>,
-    node_tube: Vec<usize>,
     visc_f: Vec<f64>,
     rad_of: Vec<i32>,
 
@@ -404,7 +403,6 @@ impl AirwayNetwork {
             wall_y: Vec::new(),
             wall_v: Vec::new(),
             wall_u: Vec::new(),
-            node_tube: Vec::new(),
             visc_f: Vec::new(),
             rad_of: Vec::new(),
             n_branches: 0,
@@ -541,7 +539,6 @@ impl AirwayNetwork {
         self.wall_y = zf(n);
         self.wall_v = zf(n);
         self.wall_u = zf(n);
-        self.node_tube = vec![0; n];
         self.visc_f = zf(n);
         self.rad_of = vec![-1; n];
         for ti in 0..self.tubes.len() {
@@ -560,7 +557,6 @@ impl AirwayNetwork {
                 self.amin_target[k] = a;
                 self.dx[k] = dx;
                 self.dx_target[k] = dx;
-                self.node_tube[k] = t.index;
                 self.visc_f[k] = spec.viscous_factor;
                 if let Some(w) = spec.wall {
                     self.has_wall[k] = true;
@@ -1203,11 +1199,6 @@ impl AirwayNetwork {
         }
     }
 
-    /// Total radiated volume velocity of radiator r.
-    pub fn radiated_flow(&self, r: usize) -> f64 {
-        self.rad_u[r]
-    }
-
     /// Linearised element values at the *target* geometry (what the next block ramps to), for
     /// frequency-domain analysis. Same formulas as step(); kinetic losses are omitted (they
     /// vanish for small signals about zero mean flow).
@@ -1281,11 +1272,6 @@ impl AirwayNetwork {
             r_visc,
             g_heat,
         }
-    }
-
-    /// Tube index of a node.
-    pub fn tube_of_node(&self, node: usize) -> usize {
-        self.node_tube[node]
     }
 
     /// Reset all acoustic state.

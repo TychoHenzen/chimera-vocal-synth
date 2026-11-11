@@ -1,39 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-
-/** Write mono or stereo 16-bit PCM WAV. Channels are Float32/64 arrays in [-1, 1]. */
-export function writeWav(path: string, channels: ArrayLike<number>[], sampleRate: number): void {
-  const nCh = channels.length;
-  const n = channels[0].length;
-  const bytesPerSample = 2;
-  const dataBytes = n * nCh * bytesPerSample;
-  const buf = Buffer.alloc(44 + dataBytes);
-  buf.write("RIFF", 0);
-  buf.writeUInt32LE(36 + dataBytes, 4);
-  buf.write("WAVE", 8);
-  buf.write("fmt ", 12);
-  buf.writeUInt32LE(16, 16);
-  buf.writeUInt16LE(1, 20);
-  buf.writeUInt16LE(nCh, 22);
-  buf.writeUInt32LE(sampleRate, 24);
-  buf.writeUInt32LE(sampleRate * nCh * bytesPerSample, 28);
-  buf.writeUInt16LE(nCh * bytesPerSample, 32);
-  buf.writeUInt16LE(16, 34);
-  buf.write("data", 36);
-  buf.writeUInt32LE(dataBytes, 40);
-  let o = 44;
-  for (let i = 0; i < n; i++) {
-    for (let c = 0; c < nCh; c++) {
-      let v = channels[c][i];
-      if (!Number.isFinite(v)) v = 0;
-      v = Math.max(-1, Math.min(1, v));
-      buf.writeInt16LE(Math.round(v * 32767), o);
-      o += 2;
-    }
-  }
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, buf);
-}
+import { readFileSync } from "node:fs";
 
 export function readWav(path: string): { sampleRate: number; channels: Float32Array[] } {
   const buf = readFileSync(path);

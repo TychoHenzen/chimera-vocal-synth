@@ -156,20 +156,8 @@ pub fn smoothstep(e0: f64, e1: f64, x: f64) -> f64 {
     let t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
-pub fn db_to_gain(db: f64) -> f64 {
-    pow(10.0, db / 20.0)
-}
-pub fn gain_to_db(g: f64) -> f64 {
-    20.0 * log10(js_max(1e-12, g))
-}
 pub fn midi_to_hz(m: f64) -> f64 {
     440.0 * pow(2.0, (m - 69.0) / 12.0)
-}
-pub fn hz_to_midi(f: f64) -> f64 {
-    69.0 + 12.0 * log2(js_max(1e-6, f) / 440.0)
-}
-pub fn cents_to_ratio(c: f64) -> f64 {
-    pow(2.0, c / 1200.0)
 }
 
 /// Fast deterministic PRNG (mulberry32 core with 32-bit state), uniform in [0,1).
@@ -222,9 +210,6 @@ pub struct Smoother {
 impl Smoother {
     pub fn new(initial: f64, tau_samples: f64) -> Self {
         Smoother { value: initial, a: if tau_samples > 0.0 { exp(-1.0 / tau_samples) } else { 0.0 } }
-    }
-    pub fn set_tau(&mut self, tau_samples: f64) {
-        self.a = if tau_samples > 0.0 { exp(-1.0 / tau_samples) } else { 0.0 };
     }
     pub fn step(&mut self, target: f64) -> f64 {
         self.value = target + (self.value - target) * self.a;

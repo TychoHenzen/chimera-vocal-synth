@@ -71,19 +71,6 @@ export function hamming(n: number): Float64Array {
   return w;
 }
 
-/** Magnitude spectrum in dB (n/2+1 bins) of a real frame, windowed. */
-export function powerSpectrumDb(frame: ArrayLike<number>, fft: FFT, window: Float64Array): Float64Array {
-  const n = fft.n;
-  const re = new Float64Array(n);
-  const im = new Float64Array(n);
-  const m = Math.min(frame.length, window.length, n);
-  for (let i = 0; i < m; i++) re[i] = frame[i] * window[i];
-  fft.transform(re, im);
-  const out = new Float64Array(n / 2 + 1);
-  for (let k = 0; k <= n / 2; k++) out[k] = 10 * Math.log10(re[k] * re[k] + im[k] * im[k] + 1e-30);
-  return out;
-}
-
 export function nextPow2(x: number): number {
   let n = 1;
   while (n < x) n <<= 1;

@@ -39,10 +39,6 @@ export function initChimera(source?: BufferSource | string): Promise<void> {
   return loading;
 }
 
-export function chimeraReady(): boolean {
-  return exports !== null;
-}
-
 /** The compiled module, for the AudioWorklet's own instance. */
 export function chimeraModule(): WebAssembly.Module {
   if (!module) throw new Error("engine not loaded (await initChimera())");

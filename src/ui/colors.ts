@@ -61,33 +61,6 @@ export const C = {
   tooth: "#101010",
 };
 
-/** fMRI-style "hot" scale for acoustic energy: black → red → orange → yellow → white. */
-const HOT: [number, number, number, number][] = [
-  [0.0, 0, 0, 0],
-  [0.25, 138, 18, 0],
-  [0.5, 240, 88, 28],
-  [0.75, 255, 209, 92],
-  [1.0, 255, 248, 230],
-];
-
-export function hot(t: number): [number, number, number] {
-  if (!(t > 0)) return [0, 0, 0];
-  if (t >= 1) return [255, 248, 230];
-  for (let i = 1; i < HOT.length; i++) {
-    if (t <= HOT[i][0]) {
-      const a = HOT[i - 1], b = HOT[i];
-      const u = (t - a[0]) / (b[0] - a[0]);
-      return [a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u, a[3] + (b[3] - a[3]) * u];
-    }
-  }
-  return [255, 248, 230];
-}
-
-export const hotCss = (t: number, alpha = 1): string => {
-  const [r, g, b] = hot(t);
-  return `rgba(${r | 0}, ${g | 0}, ${b | 0}, ${alpha})`;
-};
-
 /** Map acoustic pressure RMS (dyn/cm²) to 0..1 on a log scale. */
 export const pressureLevel = (rms: number): number => {
   if (!(rms > 0)) return 0;

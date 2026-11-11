@@ -201,7 +201,7 @@ export function restTip(jaw: number, tbX: number, tbY: number): { x: number; y: 
   return call("restTip", { jaw, tbX, tbY });
 }
 
-/** Template ↔ body coordinates of one body (mirrors HumanVocalTract::p / un_p, for drawing and dragging). */
+/** Template ↔ body coordinates of one body (mirrors HumanVocalTract::p and its inverse, for drawing and dragging). */
 export class TractMap {
   readonly scale: number;
   private readonly ph: number;

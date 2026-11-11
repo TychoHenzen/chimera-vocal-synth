@@ -167,15 +167,6 @@ impl HumanArtic {
     pub fn to_array(&self) -> [f64; N_ARTIC] {
         ArticKey::ALL.map(|k| self.get(k))
     }
-    pub fn from_array(a: &[f64]) -> HumanArtic {
-        let mut out = NEUTRAL;
-        for (i, k) in ArticKey::ALL.iter().enumerate() {
-            if i < a.len() {
-                out.set(*k, a[i]);
-            }
-        }
-        out
-    }
 }
 
 /// A partial articulation (`Partial<HumanArtic>`): the keys present, in canonical order.
@@ -692,21 +683,6 @@ impl HumanVocalTract {
         let xx = if x > 0.5 { 0.5 + (x - 0.5) * 0.86 } else { x };
         let yy = if y < 7.0 { 7.0 - (7.0 - y) * ph } else { y };
         v(xx * k, yy * k)
-    }
-
-    /// Inverse of `p()`: body coordinates → template coordinates (for direct manipulation).
-    pub fn un_p(&self, x: f64, y: f64) -> Vec2 {
-        let k = self.k;
-        let ph = self.body.pharynx;
-        let mut xx = x / k;
-        let mut yy = y / k;
-        if xx > 0.5 {
-            xx = 0.5 + (xx - 0.5) / 0.86;
-        }
-        if yy < 7.0 {
-            yy = 7.0 - (7.0 - yy) / ph;
-        }
-        v(xx, yy)
     }
 
     pub fn scale(&self) -> f64 {
@@ -1390,15 +1366,13 @@ struct Projection {
     s: f64,
     dist: f64,
     signed: f64,
-    x: f64,
-    y: f64,
     seg: usize,
 }
 
 /// Project a point onto a polyline: arc position, distance, and the side (cross<0 = airway side).
 fn project_on(pl: &Polyline, cum: &[f64], px: f64, py: f64) -> Projection {
     let mut best = f64::INFINITY;
-    let (mut bs, mut bx, mut by, mut sign, mut bseg) = (0.0, 0.0, 0.0, 1.0, 0usize);
+    let (mut bs, mut sign, mut bseg) = (0.0, 1.0, 0usize);
     for (i, &ci) in cum.iter().enumerate().take(pl.xs.len().saturating_sub(1)) {
         let (ax, ay) = (pl.xs[i], pl.ys[i]);
         let (ex, ey) = (pl.xs[i + 1] - ax, pl.ys[i + 1] - ay);
@@ -1412,14 +1386,12 @@ fn project_on(pl: &Polyline, cum: &[f64], px: f64, py: f64) -> Projection {
         if d < best {
             best = d;
             bs = ci + t * sqrt(l2);
-            bx = qx;
-            by = qy;
             let cross = ex * (py - ay) - ey * (px - ax);
             sign = if cross < 0.0 { 1.0 } else { -1.0 };
             bseg = i;
         }
     }
-    Projection { s: bs, dist: best, signed: sign * best, x: bx, y: by, seg: bseg }
+    Projection { s: bs, dist: best, signed: sign * best, seg: bseg }
 }
 
 /// The point at arc length s along a polyline.
@@ -1475,19 +1447,3 @@ fn closest_approach(pl: &Polyline, cum: &[f64], pts: &[Vec2]) -> (f64, Vec2) {
     (d, v(ey / l, -ex / l))
 }
 
-/// Clamp drawn tissue points that penetrate a wall onto its surface (drawing only).
-pub fn clamp_to_wall(points: &[Vec2], wall: &[Vec2]) -> Vec<Vec2> {
-    let mut pl = Polyline::with_capacity(wall.len());
-    pl.append(wall, false);
-    let mut cum = vec![0.0; wall.len()];
-    for i in 1..wall.len() {
-        cum[i] = cum[i - 1] + hypot(wall[i].x - wall[i - 1].x, wall[i].y - wall[i - 1].y);
-    }
-    points
-        .iter()
-        .map(|p| {
-            let pr = project_on(&pl, &cum, p.x, p.y);
-            if pr.signed < 0.0 && pr.dist < 1.5 { v(pr.x, pr.y) } else { *p }
-        })
-        .collect()
-}

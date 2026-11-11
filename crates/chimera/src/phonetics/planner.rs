@@ -448,14 +448,7 @@ fn pitch_ramp(dur: f64) -> f64 {
 /// Oral gestures for one consonant constriction held acoustically from `a` to `b` (closure to
 /// release): a dominant gesture on the consonant's own articulators and a weak one on the rest.
 /// Movement latencies are compensated so the acoustic closure and release land on a and b.
-pub fn oral_gestures(def: &PhonemeDef, tg: &ArticPatch, a: f64, b: f64, speed: f64, label: &str) -> Vec<Gesture> {
-    let mut out = Vec::with_capacity(4);
-    oral_gestures_into(def, tg, a, b, speed, label, &mut out);
-    out
-}
-
-/// [`oral_gestures`], appended to `out` (at most four gestures; no allocation when `out` has
-/// room for them).
+/// Appended to `out` (at most four gestures; no allocation when `out` has room for them).
 pub fn oral_gestures_into(def: &PhonemeDef, tg: &ArticPatch, a: f64, b: f64, speed: f64, label: &str, out: &mut Vec<Gesture>) {
     let mut dom = ArticPatch::default();
     let mut sec = ArticPatch::default();

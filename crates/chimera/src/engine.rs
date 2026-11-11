@@ -85,10 +85,6 @@ impl Engine {
         &self.voice
     }
 
-    pub fn voice_mut(&mut self) -> &mut HumanVoice {
-        &mut self.voice
-    }
-
     /// Switch the human body. The performer's settings carry over: source (pitch reset to the
     /// new body's default), posture, breath. Allocates (a new airway network).
     pub fn set_body(&mut self, body: impl Into<BodyMix>) -> VoiceInfo {

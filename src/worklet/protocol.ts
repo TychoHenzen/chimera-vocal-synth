@@ -6,12 +6,6 @@ import type { Gesture } from "../wasm/types.ts";
 import type { CreatureTelemetry } from "../wasm/types.ts";
 import type { BeatStep, BodyMix } from "../wasm/types.ts";
 
-export interface PhraseMsg {
-  segments: Segment[];
-  intonation?: "statement" | "question" | "flat";
-  pause?: number;
-}
-
 export type BodyName = "male" | "female" | "child";
 
 export type ToWorklet =
