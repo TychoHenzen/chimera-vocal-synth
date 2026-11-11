@@ -17,3 +17,5 @@ voiceRef/
 .serena/
 # second cargo target dir, used while a long run holds target/release/chimera.exe open
 target-dev/
+# quality-guard's scan and refactor skill write their evidence (units, report, responsibility map) here
+.quality/

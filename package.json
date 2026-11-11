@@ -11,6 +11,7 @@
     "test": "bun tools/prune-target.ts && bun run wasm && cargo test --workspace && bun test tests",
     "typecheck": "tsc --noEmit",
     "lint:layout": "bun run wasm && bun tools/layout-lint.ts",
+    "quality": "bun tools/quality.ts",
     "wasm": "cargo build -p chimera-wasm --release --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/chimera_wasm.wasm src/wasm/chimera.wasm"
   },
   "dependencies": {

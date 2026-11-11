@@ -54,3 +54,21 @@ and the CLI) under a React UI. See the README.
 | `crates/chimera/` sound | re-bless goldens (above); `cargo run --release -q -p chimera --example bench` against the previous commit |
 | `crates/chimera-wasm/`, `src/wasm/`, `src/worklet/`, `src/main.tsx` | `bun run build && bun run preview`, then `bun tools/e2e.ts` |
 | `src/ui/`, `src/show/`, CSS | `bun run lint:layout` |
+
+## Quality scan
+
+`bun run quality` prints quality-guard's structural findings; `bun run quality --units` writes
+`.quality/units.json` (gitignored) for `/quality-guard:quality-refactor`. `docs/mockups/` is not
+scanned: it is the frozen design reference.
+
+- A refactor preserves behavior, so a golden failure means the change is wrong: revert it, never
+  re-bless. Keep floating-point operations in their order; reassociating one moves the goldens.
+- Don't split `AirwayNetwork::step` or the heat loop for length: they are the audio hot path, and
+  the inner loops are written to vectorise. Bench any engine refactor against the previous commit.
+- Rust `types-per-file`: a struct with its impl and its small enums is one owner; split by
+  responsibility, not by type count. `unused-local` on `(async () => { ... })()` is the scanner
+  misreading an async IIFE.
+- Renaming a TS tuple can change a persisted shape (saved runs, `ear-answers.json`, wasm replies):
+  check the reader before you rename.
+- No mass `rustfmt` or reformat for `line-length`: wrap lines in the code you are already changing.
+- The repo has no issues or Project, so each refactor's commit is its record (tier, outcome, checks).
