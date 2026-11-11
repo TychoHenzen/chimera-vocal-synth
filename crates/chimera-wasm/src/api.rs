@@ -36,6 +36,9 @@ struct State {
     /// the Evolve mode's recording and notes (per worker, and on the main thread for the optimiser)
     evo_problem: Option<chimera::evolve::Problem>,
     evo_cma: Option<chimera::evolve::Cma>,
+    /// when the optimiser searches only some genes: their indices, and the whole genome the rest
+    /// stay at
+    evo_free: Option<(Vec<usize>, Vec<f64>)>,
 }
 
 thread_local! {
@@ -167,6 +170,7 @@ fn dispatch(st: &mut State, req: &Value) -> Res {
             let out = json!({ "genes": p.spec.genes, "seconds": p.seconds, "clip0": p.clip0, "bands": chimera::evolve::BANDS, "compNames": chimera::evolve::COMP_NAMES, "compWeights": chimera::evolve::COMP_WEIGHTS, "vowelChoices": chimera::evolve::VOWEL_CHOICES, "nGlobal": chimera::evolve::Spec::n_global(), "featureNames": chimera::analysis::ear::FEATURE_NAMES });
             st.evo_problem = Some(p);
             st.evo_cma = None;
+            st.evo_free = None;
             Ok(out)
         }
         "evolveEval" => {
@@ -195,6 +199,22 @@ fn dispatch(st: &mut State, req: &Value) -> Res {
                 Some(v) if !v.is_null() => serde_json::from_value(v.clone()).map_err(|e| format!("start: {e}"))?,
                 _ => p.spec.start(),
             };
+            // optional `free`: the indices of the only genes searched; the rest stay at `start`
+            let free: Option<Vec<usize>> = arg(req, "free")?;
+            if start.len() != p.spec.dim() {
+                return Err(format!("start has {} genes, this song has {}", start.len(), p.spec.dim()));
+            }
+            if let Some(f) = &free {
+                if f.is_empty() || f.iter().any(|&i| i >= start.len()) {
+                    return Err(format!("free genes {f:?} out of range for {} genes", start.len()));
+                }
+                let sigma = arg(req, "sigma")?;
+                let cma = chimera::evolve::Cma::new(f.iter().map(|&i| start[i]).collect(), sigma, arg(req, "pop")?, arg(req, "seed")?);
+                let out = json!({ "start": start, "generation": 0, "sigma": sigma, "nGlobal": chimera::evolve::Spec::n_global() });
+                st.evo_cma = Some(cma);
+                st.evo_free = Some((f.clone(), start));
+                return Ok(out);
+            }
             let cma = match req.get("state") {
                 Some(v) if !v.is_null() => serde_json::from_value::<chimera::evolve::Cma>(v.clone()).map_err(|e| format!("state: {e}"))?,
                 _ => match req.get("scales") {
@@ -213,11 +233,26 @@ fn dispatch(st: &mut State, req: &Value) -> Res {
             }
             let out = json!({ "start": start, "generation": cma.generation, "sigma": cma.sigma, "nGlobal": chimera::evolve::Spec::n_global() });
             st.evo_cma = Some(cma);
+            st.evo_free = None;
             Ok(out)
         }
         "evolveAsk" => {
             let c = st.evo_cma.as_mut().ok_or("no optimiser (evolveStart first)")?;
-            to_json(&c.ask())
+            let xs = c.ask();
+            match &st.evo_free {
+                None => to_json(&xs),
+                Some((free, base)) => to_json(
+                    &xs.iter()
+                        .map(|x| {
+                            let mut g = base.clone();
+                            for (&i, &v) in free.iter().zip(x) {
+                                g[i] = v;
+                            }
+                            g
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+            }
         }
         "evolveTell" => {
             let c = st.evo_cma.as_mut().ok_or("no optimiser (evolveStart first)")?;

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { call } from "../../wasm/chimera.ts";
 import { EvolveRunner, cutClip, singerOf, sweepWindows, type CsdNote, type Gene, type SavedRun, type SingerBody } from "../../evolve/runner.ts";
 import { INK, drawGenes, drawNotes, drawSeries, drawSpectro, type NoteLook } from "../../evolve/charts.ts";
+import { EarPanel, ear } from "./EarPanel.tsx";
 import { Screen } from "./Screen.tsx";
 
 /** One runner for the page's life: switching modes does not stop a run. */
@@ -117,7 +118,14 @@ function sylText(n: CsdNote): string {
 
 function useRunner(): number {
   const [tick, setTick] = useState(0);
-  useEffect(() => runner.subscribe(() => setTick((t) => t + 1)), []);
+  useEffect(() => {
+    const a = runner.subscribe(() => setTick((t) => t + 1));
+    const b = ear.subscribe(() => setTick((t) => t + 1));
+    return () => {
+      a();
+      b();
+    };
+  }, []);
   return tick;
 }
 
@@ -160,7 +168,7 @@ export function EvolvePage() {
   const [pendingWav, setPendingWav] = useState<{ name: string; buf: ArrayBuffer } | null>(null);
   const [pendingCsv, setPendingCsv] = useState<{ name: string; text: string } | null>(null);
   const [resume, setResume] = useState<SavedRun | null>(null);
-  const [mode, setMode] = useState<"range" | "sweep">("sweep");
+  const [mode, setMode] = useState<"range" | "sweep" | "ear">("sweep");
   const [body, setBody] = useState<SingerBody>(() => singerOf(loadedSong?.label ?? ""));
   const [winSize, setWinSize] = useState(6);
   const [overlap, setOverlap] = useState(2);
@@ -225,6 +233,10 @@ export function EvolvePage() {
 
   const start = (withResume: boolean) => {
     if (!song || !clip) return;
+    if (mode === "ear") {
+      void ear.start({ notes: song.notes, body, first, last, wav: clip.wav, rate: song.rate, wavT0: clip.wavT0, workers, seed });
+      return;
+    }
     if (mode === "sweep") {
       void runner.startSweep({ notes: song.notes, body, samples: song.samples, rate: song.rate, window: winSize, overlap, gens, maxGens, pop, sigma, seed, workers, label: song.label });
       return;
@@ -246,6 +258,8 @@ export function EvolvePage() {
     });
   };
 
+  /** either optimiser is running: the setup is locked */
+  const busy = runner.running || ear.running;
   const h = runner.history;
   const info = runner.info;
   const lastRec = h[h.length - 1];
@@ -312,7 +326,7 @@ export function EvolvePage() {
                   ))}
                 </select>
               </label>
-              <button className="primary" disabled={!!loading || runner.running} onClick={() => void loadFromServer()}>
+              <button className="primary" disabled={!!loading || busy} onClick={() => void loadFromServer()}>
                 Load
               </button>
             </div>
@@ -342,7 +356,7 @@ export function EvolvePage() {
                 }}
               />
             </label>
-            <button disabled={!pendingWav || !pendingCsv || !!loading || runner.running} onClick={() => void loadFromFiles()}>
+            <button disabled={!pendingWav || !pendingCsv || !!loading || busy} onClick={() => void loadFromFiles()}>
               Use these files
             </button>
           </div>
@@ -353,14 +367,15 @@ export function EvolvePage() {
               <div className="ev-row">
                 <label>
                   Mode
-                  <select value={mode} disabled={runner.running} onChange={(e) => setMode(e.target.value as "range" | "sweep")}>
+                  <select value={mode} disabled={busy} onChange={(e) => setMode(e.target.value as "range" | "sweep" | "ear")}>
                     <option value="sweep">Sweep the song, window by window</option>
                     <option value="range">One range of notes</option>
+                    <option value="ear">Learn from my ear (A/B questions)</option>
                   </select>
                 </label>
                 <label>
                   Body
-                  <select value={body} disabled={runner.running} onChange={(e) => setBody(e.target.value as SingerBody)}>
+                  <select value={body} disabled={busy} onChange={(e) => setBody(e.target.value as SingerBody)}>
                     <option value="female">Female</option>
                     <option value="male">Male</option>
                   </select>
@@ -369,19 +384,19 @@ export function EvolvePage() {
                   <>
                     <label>
                       Notes per window
-                      <input type="number" min={2} max={16} value={winSize} disabled={runner.running} onChange={(e) => setWinSize(Math.max(2, Math.min(16, Number(e.target.value))))} />
+                      <input type="number" min={2} max={16} value={winSize} disabled={busy} onChange={(e) => setWinSize(Math.max(2, Math.min(16, Number(e.target.value))))} />
                     </label>
                     <label>
                       Overlap
-                      <input type="number" min={0} max={winSize - 1} value={overlap} disabled={runner.running} onChange={(e) => setOverlap(Math.max(0, Math.min(winSize - 1, Number(e.target.value))))} />
+                      <input type="number" min={0} max={winSize - 1} value={overlap} disabled={busy} onChange={(e) => setOverlap(Math.max(0, Math.min(winSize - 1, Number(e.target.value))))} />
                     </label>
                     <label>
                       Generations per window, at least
-                      <input type="number" min={1} max={500} value={gens} disabled={runner.running} onChange={(e) => setGens(Math.max(1, Number(e.target.value)))} />
+                      <input type="number" min={1} max={500} value={gens} disabled={busy} onChange={(e) => setGens(Math.max(1, Number(e.target.value)))} />
                     </label>
                     <label>
                       at most
-                      <input type="number" min={gens} max={2000} value={maxGens} disabled={runner.running} onChange={(e) => setMaxGens(Math.max(gens, Number(e.target.value)))} />
+                      <input type="number" min={gens} max={2000} value={maxGens} disabled={busy} onChange={(e) => setMaxGens(Math.max(gens, Number(e.target.value)))} />
                     </label>
                     <span className="hint">
                       {windows.length} windows over {song.notes.length} notes. A window moves on once its best has stopped improving and the population has closed in; the first gets twice the generations (it also finds the voice)
@@ -389,37 +404,58 @@ export function EvolvePage() {
                   </>
                 )}
               </div>
-              {mode === "range" && (
+              {(mode === "range" || mode === "ear") && (
               <div className="ev-row">
                 <label>
                   First note
-                  <input type="number" min={0} max={song.notes.length - 1} value={first} disabled={runner.running} onChange={(e) => setFirst(Math.max(0, Math.min(Number(e.target.value), last)))} />
+                  <input type="number" min={0} max={song.notes.length - 1} value={first} disabled={busy} onChange={(e) => setFirst(Math.max(0, Math.min(Number(e.target.value), last)))} />
                 </label>
                 <label>
                   Last note
-                  <input type="number" min={first} max={song.notes.length - 1} value={last} disabled={runner.running} onChange={(e) => setLast(Math.max(first, Math.min(Number(e.target.value), song.notes.length - 1)))} />
+                  <input type="number" min={first} max={song.notes.length - 1} value={last} disabled={busy} onChange={(e) => setLast(Math.max(first, Math.min(Number(e.target.value), song.notes.length - 1)))} />
                 </label>
-                <span className="hint">{song.notes.slice(first, last + 1).map((n) => n.csd).join(" ")}</span>
+                <span className="hint">
+                  {song.notes.slice(first, last + 1).map((n) => n.csd).join(" ")}
+                  {mode === "ear" && " / every question plays these notes: a few seconds with several vowels works best"}
+                </span>
               </div>
               )}
               <div className="ev-row">
+                {mode !== "ear" && (
                 <label>
                   Population
-                  <input type="number" min={4} max={128} value={pop} disabled={runner.running} onChange={(e) => setPop(Math.max(4, Number(e.target.value)))} />
+                  <input type="number" min={4} max={128} value={pop} disabled={busy} onChange={(e) => setPop(Math.max(4, Number(e.target.value)))} />
                 </label>
+                )}
                 <label>
                   Workers (of {cores} cores)
-                  <input type="number" min={1} max={cores} value={workers} disabled={runner.running} onChange={(e) => setWorkers(Math.max(1, Number(e.target.value)))} />
+                  <input type="number" min={1} max={cores} value={workers} disabled={busy} onChange={(e) => setWorkers(Math.max(1, Number(e.target.value)))} />
                 </label>
+                {mode !== "ear" && (
                 <label>
                   Step size
-                  <input type="number" min={0.02} max={0.5} step={0.02} value={sigma} disabled={runner.running} onChange={(e) => setSigma(Number(e.target.value))} />
+                  <input type="number" min={0.02} max={0.5} step={0.02} value={sigma} disabled={busy} onChange={(e) => setSigma(Number(e.target.value))} />
                 </label>
+                )}
                 <label>
                   Seed
-                  <input type="number" value={seed} disabled={runner.running} onChange={(e) => setSeed(Number(e.target.value))} />
+                  <input type="number" value={seed} disabled={busy} onChange={(e) => setSeed(Number(e.target.value))} />
                 </label>
               </div>
+              {mode === "ear" ? (
+              <div className="ev-row">
+                {ear.running ? (
+                  <button className="primary" onClick={() => ear.stop()}>
+                    Stop
+                  </button>
+                ) : (
+                  <button className="primary" disabled={busy} onClick={() => start(false)}>
+                    Start listening
+                  </button>
+                )}
+                <span className="hint">your answers are kept in out/evolve/ear-answers.json and carry over to any clip</span>
+              </div>
+              ) : (
               <div className="ev-row">
                 {runner.running ? (
                   <>
@@ -448,7 +484,7 @@ export function EvolvePage() {
                   <input
                     type="file"
                     accept=".json,application/json"
-                    disabled={runner.running}
+                    disabled={busy}
                     onChange={async (e) => {
                       const f = e.target.files?.[0];
                       if (!f) return;
@@ -467,8 +503,12 @@ export function EvolvePage() {
                   />
                 </label>
               </div>
+              )}
             </>
           )}
+          {mode === "ear" ? (
+          <p className="ev-status">{ear.error ? <span className="error">{ear.error}</span> : ear.status || (song ? "ready" : "")}</p>
+          ) : (
           <p className="ev-status">
             {runner.error ? <span className="error">{runner.error}</span> : runner.status || (song ? "ready" : "")}
             {lastRec && (
@@ -478,6 +518,7 @@ export function EvolvePage() {
               </>
             )}
           </p>
+          )}
         </div>
       </Screen>
 
@@ -513,6 +554,10 @@ export function EvolvePage() {
         </Screen>
       )}
 
+      {mode === "ear" ? (
+        <EarPanel label={song?.label ?? ""} />
+      ) : (
+      <>
       <Screen className="ev-loss" title="Loss" sub={sweep ? "log scale, lower is closer; dashed lines start a new window (a new clip, so the level jumps)" : "log scale, lower is closer"}>
         <Canvas
           deps={[tick]}
@@ -642,6 +687,8 @@ export function EvolvePage() {
           </table>
         </div>
       </Screen>
+      </>
+      )}
     </div>
   );
 }

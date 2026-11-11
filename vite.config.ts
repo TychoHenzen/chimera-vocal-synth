@@ -44,8 +44,17 @@ function voiceRef(): Plugin {
       res.statusCode = 404;
       res.end("not found");
     };
-    // a render the page (or an agent driving it) wants kept: written to out/evolve/ (gitignored)
-    const save = /^\/voiceref\/save\/([\w-]+\.wav)$/.exec(url);
+    // a file the page wrote earlier (Evolve's ear answers), read back from out/evolve/
+    const savedFile = /^\/voiceref\/saved\/([\w-]+\.json)$/.exec(url);
+    if (savedFile) {
+      const f = path.resolve(import.meta.dirname, "out/evolve", savedFile[1]);
+      if (!fs.existsSync(f)) return notFound();
+      res.setHeader("content-type", "application/json");
+      return void fs.createReadStream(f).pipe(res);
+    }
+    // a render or a JSON file the page (or an agent driving it) wants kept: written to out/evolve/
+    // (gitignored)
+    const save = /^\/voiceref\/save\/([\w-]+\.(?:wav|json))$/.exec(url);
     if (save && req.method === "POST") {
       const parts: Buffer[] = [];
       let size = 0;

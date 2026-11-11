@@ -2956,6 +2956,13 @@ input[type="range"]::-moz-range-thumb {
 .evolve .ev-bar i { position: absolute; top: -2px; width: 2px; height: 12px; }
 .evolve .ev-bar i.def { background: var(--blue-mid); }
 .evolve .ev-bar i.val { background: var(--amber); }
+.evolve .ev-ear,
+.evolve .ev-likes { grid-column: 1 / -1; }
+.evolve button.on { color: var(--amber); border-color: var(--amber); }
+.evolve .ev-ab button { min-width: 64px; }
+.evolve .ev-weight { position: relative; display: block; width: 200px; height: 10px; border: 1px solid var(--frame); }
+.evolve .ev-weight b { position: absolute; top: 0; height: 100%; background: var(--amber); }
+.evolve .ev-weight b.neg { background: var(--red); }
 @media (max-width: 900px) {
   .evolve { grid-template-columns: minmax(0, 1fr); }
 }

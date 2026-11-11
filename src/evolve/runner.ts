@@ -33,6 +33,8 @@ export interface ProblemInfo {
   vowelChoices: string[];
   /** genes before the per-note ones: the voice */
   nGlobal: number;
+  /** what each of a render's ear features is (`chimera::analysis::ear`) */
+  featureNames: string[];
 }
 /** Genes per note, after the voice's: shift_s, dur_s, cents, vowel, level_db. */
 export const PER_NOTE = 5;
@@ -153,7 +155,8 @@ export function sweepWindows(n: number, size: number, overlap: number): [number,
   return out;
 }
 
-const unit = (g: Gene) => (g.def - g.lo) / (g.hi - g.lo);
+/** A gene's default as a genome value (0..1 across its range). */
+export const unit = (g: Gene) => (g.def - g.lo) / (g.hi - g.lo);
 
 /**
  * A sweep window's genomes. `start` is where the window's search begins: the voice evolved so far
@@ -209,7 +212,8 @@ export interface SavedRun {
   elapsed: number;
 }
 
-class Pool {
+/** Workers, each with its own engine; jobs sent to one worker run in order. */
+export class Pool {
   private workers: Worker[] = [];
   private pending = new Map<number, { ok: (v: unknown) => void; fail: (e: Error) => void }>();
   private next = 1;

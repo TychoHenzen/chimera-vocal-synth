@@ -4,7 +4,7 @@
  */
 import { call, initChimera } from "../wasm/chimera.ts";
 
-export type Job = { type: "init"; problem: Record<string, unknown> } | { type: "eval"; xs: number[][] } | { type: "render"; x: number[] };
+export type Job = { type: "init"; problem: Record<string, unknown> } | { type: "eval"; xs: number[][] } | { type: "features"; xs: number[][] } | { type: "render"; x: number[] };
 export type ToWorker = Job & { id: number };
 
 export type FromWorker = { type: "done"; id: number; result: unknown } | { type: "error"; id: number; error: string };
@@ -17,6 +17,7 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
       await initChimera();
       result = call("evolveProblem", m.problem);
     } else if (m.type === "eval") result = call("evolveEval", { xs: m.xs });
+    else if (m.type === "features") result = call("evolveFeatures", { xs: m.xs });
     else result = call("evolveRender", { x: m.x });
     (self as unknown as Worker).postMessage({ type: "done", id: m.id, result } satisfies FromWorker);
   } catch (e) {
