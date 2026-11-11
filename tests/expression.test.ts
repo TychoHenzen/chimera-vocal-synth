@@ -13,6 +13,10 @@ const { planUtterance } = await import("../src/wasm/engine.ts");
 const MALE = { female: 0, child: 0 };
 const FS = 48000;
 
+/** A test that renders a few seconds of audio: the engine runs at about real time here, so the
+ * work alone takes 2-4 s and a busy machine pushed it past bun's 5 s default. */
+const RENDERS_AUDIO = 60_000;
+
 /** the telemetry block (as src/worklet/processor.ts reads it), with what Expression uses */
 function telemetry(v: WasmVoice): TelemetryMessage {
   const { x, h } = v as unknown as { x: { memory: WebAssembly.Memory; engine_telemetry: (h: number) => number }; h: number };
@@ -51,7 +55,7 @@ describe("expression", () => {
     expect(pk.get("p")!.puff).toBeGreaterThan(0.6);
     expect(pk.get("b")!.puff).toBeGreaterThan(0.6);
     for (const s of ["m", "t", "k"]) expect(pk.get(s)!.puff).toBeLessThan(0.15);
-  });
+  }, RENDERS_AUDIO);
 
   test("brows rise on a note well above the recent pitch, and a long note closes the eyes", () => {
     // a voiced frame at a pitch (only what Expression reads differs from silence)

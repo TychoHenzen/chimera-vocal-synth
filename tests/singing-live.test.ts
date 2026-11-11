@@ -14,6 +14,10 @@ const { activation } = await import("../src/wasm/engine.ts");
 const midiToHz = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
 
 const FS = 48000;
+
+/** A test that renders a few seconds of audio: the engine runs at about real time here, so the
+ * work alone takes 2-4 s and a busy machine pushed it past bun's 5 s default. */
+const RENDERS_AUDIO = 60_000;
 let voice = new WasmVoice(FS);
 const fakeEngine = {
   latest: null,
@@ -120,7 +124,7 @@ describe("Sing mode, live keys", () => {
     let peak = 0;
     for (const r of [...a.rms, ...b.rms]) peak = Math.max(peak, r);
     expect(Math.max(...f.rms.slice(Math.floor(0.3 * FS / 128)))).toBeLessThan(peak * 0.003); // < -50 dB
-  });
+  }, RENDERS_AUDIO);
 
   test("a soft key breathes less than a hard one", () => {
     const level = (velocity: number) => {
@@ -136,7 +140,7 @@ describe("Sing mode, live keys", () => {
     const soft = level(30), hard = level(127);
     if (process.env.SING_VERBOSE) console.log(`hard vs soft key: ${(20 * Math.log10(hard.rms / soft.rms)).toFixed(1)} dB`);
     expect(hard.rms / soft.rms).toBeGreaterThan(1.6); // > 4 dB
-  });
+  }, RENDERS_AUDIO);
 
   test("a demo still waiting for audio or the dictionary is cancelled by a stop", async () => {
     voice = new WasmVoice(FS);
@@ -177,7 +181,7 @@ describe("Sing mode, live keys", () => {
     run(0.06);
     // the cancelled ending's breath is gone (the note's own breath is at the end of its 70 ms fade)
     expect(breathNow()).toBeLessThan(0.01);
-  });
+  }, RENDERS_AUDIO);
 
   test("overlapping endings all stay owned: a stop cancels every one", () => {
     voice = new WasmVoice(FS);
